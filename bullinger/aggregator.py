@@ -13,7 +13,16 @@ class Aggregator(object):
 
     def __init__(self, folder):
         self.folder = folder
-        self.filenames = glob.glob(os.path.join(self.folder, '**/*.txt'))
+        # Who is autistic
+        candidates = glob.glob(os.path.join(self.folder, '*.csv'))
+        if candidates:
+            df = pd.read_csv(candidates[0])
+            self.autists = set(df[df.group == 'AD'].baby.unique())
+        else:
+            self.autists = set()
+
+        self.filenames = glob.glob(
+            os.path.join(self.folder, '**/*.txt'), recursive=True)
         self.per_baby = collections.defaultdict(list)
         for filename in self.filenames:
             if os.path.basename(filename).startswith('__'):
@@ -21,16 +30,12 @@ class Aggregator(object):
 
             baby = os.path.basename(os.path.dirname(filename))
             try:
-                ann = bullinger.annotations.VideoAnnotations(filename)
+                ann = bullinger.annotations.VideoAnnotations(
+                    filename, self.is_autistic(baby))
             except Exception as e:
                 logging.error(e)
                 continue
             self.per_baby[baby].append(ann)
-
-        candidates = glob.glob(os.path.join(self.folder, '*csv'))
-        if candidates:
-            df = pd.read_csv(candidates[0])
-            self.autists = set(df[df.group == 'AD'].baby.unique())
 
         self.tags = set()
         for ll in self.per_baby.values():
@@ -80,14 +85,26 @@ class Aggregator(object):
                     (va.semester, self.is_autistic(baby)) +
                     va.metrics(None) +
                     va.metrics(True) +
-                    va.metrics(False))
+                    va.metrics(False)
+                )
         df = pd.DataFrame(np.array(result))
         df.columns = [
             'semester', 'ad',
-            'r_all', 's_all', 'r_avec', 's_avec', 'r_sans', 's_sans'
-            ]
+            'resp_all', 'stimu_all', 'ratio_all', 'instal_all',
+            'resp_avec', 'stimu_avec', 'ratio_avec', 'instal_avec',
+            'resp_sans', 'stimu_sans', 'ratio_sans', 'instal_sans'
+        ]
         df = df.astype({
             'semester': int, 'ad': bool,
         })
         df['baby'] = babies
         return df
+
+    @property
+    def responses(self):
+        df = self.metrics_df
+
+        def clean_median(x):
+            return np.nanmedian(x[x < np.inf])
+
+        return df.groupby(['ad', 'semester']).agg(clean_median)

@@ -2,14 +2,19 @@ import logging
 import numpy as np
 import pandas as pd
 import intervals
+import os.path
+
 
 class VideoAnnotations(object):
     """The annotations of a single video, annotated by ELAN."""
 
     COLUMNS = ['actor', 'video_id', 'start', 'end', 'duration', 'tag']
 
-    def __init__(self, filename):
+    def __init__(self, filename, autistic=False):
         self.filename = filename
+        self.autistic = autistic
+        self.group = 'AD' if self.autistic else 'TD'
+        self.baby = os.path.basename(os.path.dirname(filename))
         self.semester = 1 if '(0-6)' in filename else 2
         self.df = pd.read_csv(filename, sep='\t', header=None)
         self.ill_formed = False
@@ -46,6 +51,12 @@ class VideoAnnotations(object):
     def get_adult_df(self):
         return self.df[self.df.actor.str.contains('adulte')]
 
+    def get_baby_df(self, with_init=False):
+        df = self.get_df('bébé')
+        if not with_init:
+            df = df[df.tag == 'rep']
+        return df
+
     def gaussian_smoothing(self, labels, t, kernels):
         df = self.get_df(labels)
         d = np.zeros(t.shape)
@@ -74,20 +85,37 @@ class VideoAnnotations(object):
             return 0.0
 
     def intervals(self, stimulus=False, installation=None):
-        df = self.get_adult_df() if stimulus else self.get_df('bébé')
-        result = self.get_intervals(df)
+        result = intervals.closed(self.min_x, self.max_x)
+        instal_interv = intervals.closed(self.min_x, self.max_x)
+
+        if stimulus is None:
+            result = instal_interv
+        else:
+            df = self.get_adult_df() if stimulus else self.get_baby_df()
+            result = self.get_intervals(df)
+
         if installation is not None:
-            result = result.intersection(
-                self.get_intervals(self.get_installation_df(installation)))
-        return result
+            instal_interv = self.get_intervals(
+                self.get_installation_df(installation))
+
+        result = result.intersection(instal_interv)
+        # Remove invisible parts
+        ctx_df = df = self.get_df('contexte')
+        inv_df = ctx_df[ctx_df.tag == 'inv']
+        return result.difference(self.get_intervals(inv_df))
 
     def metrics(self, installation=None):
+        # TODO(olivier): This is critical here how to count stuff
         resp = self.interval_length(
             self.intervals(stimulus=False, installation=installation))
         stim = self.interval_length(
             self.intervals(stimulus=True, installation=installation))
         instal = self.interval_length(
-            self.get_intervals(self.get_installation_df(installation)))
+            self.intervals(stimulus=None, installation=installation))
+        # s_instal = self.interval_length(
+        #     self.intervals(stimulus=None, installation=None))
         return (
             resp / instal if instal > 0.0 else np.nan,
-            stim / instal if instal else np.nan)
+            stim / instal if instal > 0.0 else np.nan,
+            resp / stim if stim > 0.0 else np.nan,
+            instal)
