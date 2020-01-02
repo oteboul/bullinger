@@ -3,4 +3,4 @@ fastdtw==0.3.4
 matplotlib==3.1.1
 numpy==1.17.0
 pandas==0.25.3
-tslearn==0.2.5
+python-intervals==1.10.0
