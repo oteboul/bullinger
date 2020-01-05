@@ -4,7 +4,6 @@ import matplotlib
 from matplotlib import lines
 from matplotlib import patches
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mtick
 import numpy as np
 import pandas as pd
 from bullinger.annotations import VideoAnnotations
@@ -191,7 +190,9 @@ class AggregationVisualizer(object):
             for i in range(1, k):
                 axes[i].get_yaxis().set_ticks([])
 
-    def scatter(self, semesters=None, installations=None, plot_score=False):
+    def scatter(
+            self, semesters=None, installations=None, plot_score=False,
+            plot_means=False, cmap='viridis', median=False):
         if installations is None:
             installations = ['all', 'avec', 'sans']
         if semesters is None:
@@ -224,17 +225,47 @@ class AggregationVisualizer(object):
                 s_df = s_df[
                     s_df[instal_col] > VideoAnnotations.INSTALLATION_THRESHOLD]
                 s_df = s_df[(s_df[stimul_col] > 0.2) | (s_df[resp_col] > 0.2)]
-                for ad in [True, False]:
+                for ad in [False, True]:
                     df = s_df[s_df.ad == ad]
-                    ax.scatter(
+                    sc = ax.scatter(
                         df[stimul_col], df[resp_col],
-                        s=200, label='AD' if ad else 'TD', zorder=3)
+                        s=200, ec='k',
+                        label='AD' if ad else 'TD', zorder=3)
+                    if plot_means:
+                        mean_fn = np.median if median else np.mean
+                        sc2 = ax.scatter(
+                            mean_fn(df[stimul_col]),
+                            mean_fn(df[resp_col]),
+                            s=300, marker='s', ec='k', color=sc.get_facecolor(),
+                            zorder=3)
+                        mu = sc2.get_offsets()[0].data
+                        color = sc.get_facecolor()[0]
+                        ax.plot(
+                            [0, mu[0]], [0, mu[1]], linestyle='-', zorder=3,
+                            lw=3, color=color)
+
+                        angle_rad = np.arctan(mu[1]/mu[0])
+                        angle = angle_rad * 180 / np.pi
+                        arc_w = np.sqrt(np.sum(mu**2)) / 2**ad
+                        txt_pos = 0.55 * arc_w * np.array(
+                            [np.cos(angle_rad/2), np.sin(angle_rad/2)])
+
+                        for ann_size, ann_col in [(27, 'k'), (26, color)]:
+                            ax.annotate(
+                                "{:.0f}°".format(angle),
+                                txt_pos,
+                                color=ann_col, fontsize=ann_size, zorder=3)
+
+                        angle_plot = patches.Arc(
+                            [0, 0], arc_w, arc_w, theta1=0.0, theta2=angle,
+                            lw=3, color=color, zorder=3)
+                        ax.add_patch(angle_plot)
 
                 for _, row in s_df.iterrows():
                     ax.annotate(
                         "{}.".format(row.baby[0]),
                         (0.01 + row[stimul_col], 0.015 + row[resp_col]),
-                        fontsize=13
+                        fontsize=13, color=(1.0, 1.0, 1.0)
                     )
 
                 m = 1.05
@@ -247,12 +278,13 @@ class AggregationVisualizer(object):
                     alpha = 0.8
                 im = ax.imshow(
                     Z, extent=[0, m, 0, m], origin='lower',
-                    alpha=alpha, zorder=1)
+                    alpha=alpha, zorder=1, cmap=cmap)
                 if plot_score:
                     fig.colorbar(im, ax=ax)
                 ax.set_autoscale_on(False)
 
-                ax.plot([0.0, m], [0, m], 'k--', alpha=0.9, zorder=2)
+                if not plot_means:
+                    ax.plot([0.0, m], [0, m], 'k--', alpha=0.9, zorder=2)
                 ax.legend(fontsize=18)
                 ax.set_title(
                     'Semestre {}, {} installation'.format(s, installation),
@@ -266,7 +298,7 @@ class AggregationVisualizer(object):
         for i, s in enumerate([1, 2]):
             ax = axes[i]
 
-            for ad in [True, False]:
+            for ad in [False, True]:
                 df = self.df[(self.df.ad == ad) & (self.df.semester == s)]
                 h = df['score_{}'.format(installation)]
 
@@ -294,7 +326,7 @@ class AggregationVisualizer(object):
                 semester=s, relative=relative, autists=True)
             td, v_td = self.agg.average_stimulus(
                 semester=s, relative=relative, autists=False)
-            pd.DataFrame({'AD': ad, 'TD': td}).plot.bar(
+            pd.DataFrame({'TD': td, 'AD': ad}).plot.bar(
                 rot=45, fontsize=18, ax=ax)
             ax.legend(fontsize=18)
             ax.set_title('Semestre {}'.format(s), fontsize=22)
