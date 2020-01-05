@@ -9,6 +9,7 @@ class VideoAnnotations(object):
     """The annotations of a single video, annotated by ELAN."""
 
     COLUMNS = ['actor', 'video_id', 'start', 'end', 'duration', 'tag']
+    INSTALLATION_THRESHOLD = 0.25
 
     def __init__(self, filename, autistic=False):
         self.filename = filename
@@ -104,6 +105,10 @@ class VideoAnnotations(object):
         inv_df = ctx_df[ctx_df.tag == 'inv']
         return result.difference(self.get_intervals(inv_df))
 
+    @staticmethod
+    def score(s, r):
+        return np.arctan(r / (s + 1e-12)) * 2 / np.pi * 90
+
     def metrics(self, installation=None):
         # TODO(olivier): This is critical here how to count stuff
         resp = self.interval_length(
@@ -112,10 +117,13 @@ class VideoAnnotations(object):
             self.intervals(stimulus=True, installation=installation))
         instal = self.interval_length(
             self.intervals(stimulus=None, installation=installation))
-        # s_instal = self.interval_length(
-        #     self.intervals(stimulus=None, installation=None))
-        return (
-            resp / instal if instal > 0.0 else np.nan,
-            stim / instal if instal > 0.0 else np.nan,
-            resp / stim if stim > 0.0 else np.nan,
-            instal)
+        instal_all = self.interval_length(
+            self.intervals(stimulus=None, installation=None))
+        r = resp / instal if instal > 0.0 else np.nan
+        s = stim / instal if instal > 0.0 else np.nan
+        i = instal if installation is None else instal / instal_all
+        score = np.nan
+        if not np.isnan(s) and not np.isnan(r):
+            if i > self.INSTALLATION_THRESHOLD and (s > 0.2 or r > 0.2):
+                score = self.score(s, r)
+        return (r, s, i, score)

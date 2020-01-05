@@ -64,11 +64,11 @@ class Aggregator(object):
                 if not va.ill_formed and va.semester == semester:
                     total += 1.0
                     p = va.stimulus_distribution
-                    if relative:
-                        p /= np.sum(p)
                     result = result.add(p, fill_value=0.0)
 
         result /= total
+        if relative:
+            result /= np.sum(result)
         return result, total
 
     @property
@@ -90,9 +90,9 @@ class Aggregator(object):
         df = pd.DataFrame(np.array(result))
         df.columns = [
             'semester', 'ad',
-            'resp_all', 'stimu_all', 'ratio_all', 'instal_all',
-            'resp_avec', 'stimu_avec', 'ratio_avec', 'instal_avec',
-            'resp_sans', 'stimu_sans', 'ratio_sans', 'instal_sans'
+            'resp_all', 'stimu_all', 'instal_all', 'score_all',
+            'resp_avec', 'stimu_avec', 'instal_avec', 'score_avec',
+            'resp_sans', 'stimu_sans', 'instal_sans', 'score_sans'
         ]
         df = df.astype({
             'semester': int, 'ad': bool,
@@ -100,11 +100,15 @@ class Aggregator(object):
         df['baby'] = babies
         return df
 
-    @property
-    def responses(self):
+    def responses(self, median=False, as_index=False):
         df = self.metrics_df
 
         def clean_median(x):
             return np.nanmedian(x[x < np.inf])
 
-        return df.groupby(['ad', 'semester']).agg(clean_median)
+        def clean_mean(x):
+            x = x[x < np.inf]
+            return np.nanmean(x)
+
+        agg_fn = clean_median if median else clean_mean
+        return df.groupby(['ad', 'semester'], as_index=as_index).agg(agg_fn)

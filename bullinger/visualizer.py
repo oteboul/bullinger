@@ -1,10 +1,13 @@
 import collections
+import difflib
 import matplotlib
 from matplotlib import lines
 from matplotlib import patches
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
 import numpy as np
 import pandas as pd
+from bullinger.annotations import VideoAnnotations
 
 
 class AnnotationsVisualizer(object):
@@ -21,7 +24,7 @@ class AnnotationsVisualizer(object):
         self.cmap = matplotlib.cm.get_cmap(cmap)
         self.tags = tags
 
-    def chronogram(self, ax=None):
+    def chronogram(self, ax=None, add_legend=True):
         df = self.df[self.df.actor != self.CONTEXT]
         actors = {a: i for (i, a) in enumerate(df.actor.unique())}
         tags = df.tag.unique() if self.tags is None else self.tags
@@ -50,17 +53,22 @@ class AnnotationsVisualizer(object):
 
         self.add_context_background(ax)
 
-        leg_tags = collections.OrderedDict(sorted(
-            {k: v for (k, v) in tags.items() if k in df.tag.unique()}.items()))
-        custom_lines = [
-            lines.Line2D([0], [0], color=self.cmap(v), lw=4)
-            for v in leg_tags.values()
+        if add_legend:
+            leg_tags = collections.OrderedDict(sorted(
+                {
+                    k: v for (k, v) in tags.items()
+                    if k in df.tag.unique()
+                }.items()))
+            custom_lines = [
+                lines.Line2D([0], [0], color=self.cmap(v), lw=4)
+                for v in leg_tags.values()
 
-        ]
-        ax.legend(
-            custom_lines, list(leg_tags.keys()),
-            fontsize=16, loc='upper right', bbox_to_anchor=(1.2, 0.6), ncol=1
-        )
+            ]
+            ax.legend(
+                custom_lines, list(leg_tags.keys()),
+                fontsize=16, loc='upper right',
+                bbox_to_anchor=(1.2, 0.6), ncol=1
+            )
 
         ax.set_yticklabels(list(actors.keys()), fontsize=18)
         ax.set_yticks(np.arange(len(actors)))
@@ -85,16 +93,16 @@ class AnnotationsVisualizer(object):
         r, s, ra, inst = self.va.metrics()
         m_a = self.va.metrics(installation=True)
         m_s = self.va.metrics(installation=False)
-        ratios = []
+        scores = []
         for name, ms in zip(['avec', 'sans'], [m_a, m_s]):
             if not np.isnan(ms[1]):
-                ratios.append("{} {:.2f}".format(name, ms[2]))
-        ratios = " | ".join(ratios)
+                scores.append("{} {:.2f}".format(name, ms[2]))
+        scores = " | ".join(scores)
 
         ax.set_title(
-            "{} ({}), Semestre {}\n"
-            "Stimulus: {:.2f}, Reponse: {:.2f} ({})".format(
-                self.va.baby, self.va.group, self.va.semester, s, r/s, ratios),
+            "{}. ({}), Semestre {}\n"
+            "Stimulus: {:.0%}, Reponse: {:.0%}".format(
+                self.va.baby[0], self.va.group, self.va.semester, s, r),
             fontsize=24)
 
     def activity(self, ax=None, num_points=1000, relative_sigma=0.01):
@@ -132,14 +140,41 @@ class AnnotationsVisualizer(object):
         return ax
 
 
+def select(df, patterns):
+    masks = []
+    for p in patterns:
+        masks.append([p in x for x in df.index.to_numpy()])
+    return df[np.any(np.stack(masks, axis=1), axis=1)]
+
+
+def longuest_common(strs):
+    if not strs:
+        return ""
+
+    result = strs[0]
+    for curr in strs[1:]:
+        match = difflib.SequenceMatcher(
+            None, result, curr).find_longest_match(0, len(result), 0, len(curr))
+        result = result[match.a: match.a + match.size]
+    return result
+
+
 class AggregationVisualizer(object):
+    NAME_MAP = {
+        'resp': 'réponse',
+        'instal': 'installation',
+        'stimul': 'stimulation',
+        'all': 'général',
+        'semester': 'semestre'
+    }
+
     def __init__(self, agg, height=8, width=12):
         self.agg = agg
         self.df = agg.metrics_df
         self.height = height
         self.width = width
 
-    def baby(self, name, idx=None):
+    def baby(self, name, idx=None, **kwargs):
         vas = self.agg.per_baby[name]
         if idx is not None:
             vas = [vas[idx]]
@@ -151,39 +186,89 @@ class AggregationVisualizer(object):
             viewer = AnnotationsVisualizer(
                 va, actor_height=0.6, tags=self.agg.tags)
             ax = axes[i] if k > 1 else axes
-            viewer.chronogram(ax=ax)
+            viewer.chronogram(ax=ax, **kwargs)
         if k > 1:
             for i in range(1, k):
                 axes[i].get_yaxis().set_ticks([])
 
-    def scatter(self):
+    def scatter(self, semesters=None, installations=None, plot_score=False):
+        if installations is None:
+            installations = ['all', 'avec', 'sans']
+        if semesters is None:
+            semesters = [1, 2]
+        if not isinstance(semesters, list):
+            semesters = [semesters]
+        if not isinstance(installations, list):
+            installations = [installations]
+
+        num_instals = len(installations)
+        num_semester = len(semesters)
+
         fig, axes = plt.subplots(
-            2, 3, figsize=(self.width * 3, self.height * 2))
-        for i, s in enumerate([1, 2]):
-            for j, installation in enumerate(['all', 'avec', 'sans']):
-                ax = axes[i, j]
+            num_instals, num_semester,
+            figsize=(self.width * num_semester, self.height * num_instals))
+
+        for i, s in enumerate(semesters):
+            for j, installation in enumerate(installations):
+                if num_semester > 1 and num_instals > 1:
+                    ax = axes[i, j]
+                elif num_instals == 1 and num_instals == 1:
+                    ax = axes
+                else:
+                    ax = axes[i+j]
+
+                s_df = self.df[(self.df.semester == s)]
+                stimul_col = 'stimu_{}'.format(installation)
+                resp_col = 'resp_{}'.format(installation)
+                instal_col = 'instal_{}'.format(installation)
+                s_df = s_df[
+                    s_df[instal_col] > VideoAnnotations.INSTALLATION_THRESHOLD]
+                s_df = s_df[(s_df[stimul_col] > 0.2) | (s_df[resp_col] > 0.2)]
                 for ad in [True, False]:
-                    df = self.df[(self.df.ad == ad) & (self.df.semester == s)]
-                    ax.scatter(df['stimu_{}'.format(installation)],
-                               df['resp_{}'.format(installation)],
-                               s=200, label='AD' if ad else 'TD', zorder=2)
-                bounds = ax.get_ylim()
-                ax.plot([0.0, 1.0], bounds, 'k--', alpha=0.4, zorder=1)
+                    df = s_df[s_df.ad == ad]
+                    ax.scatter(
+                        df[stimul_col], df[resp_col],
+                        s=200, label='AD' if ad else 'TD', zorder=3)
+
+                for _, row in s_df.iterrows():
+                    ax.annotate(
+                        "{}.".format(row.baby[0]),
+                        (0.01 + row[stimul_col], 0.015 + row[resp_col]),
+                        fontsize=13
+                    )
+
+                m = 1.05
+                x = np.linspace(0, m, 1000)
+                X, Y = np.meshgrid(x, x)
+                Z = np.ones(X.shape)
+                alpha = 0.0
+                if plot_score:
+                    Z = VideoAnnotations.score(X, Y)
+                    alpha = 0.8
+                im = ax.imshow(
+                    Z, extent=[0, m, 0, m], origin='lower',
+                    alpha=alpha, zorder=1)
+                if plot_score:
+                    fig.colorbar(im, ax=ax)
+                ax.set_autoscale_on(False)
+
+                ax.plot([0.0, m], [0, m], 'k--', alpha=0.9, zorder=2)
                 ax.legend(fontsize=18)
                 ax.set_title(
                     'Semestre {}, {} installation'.format(s, installation),
                     fontsize=18)
-                ax.set_xlabel('Intensité du Stimulus', fontsize=18)
-                ax.set_ylabel('Facteur de Réponse', fontsize=18)
+                ax.set_xlabel('Temps relatif de stimulation', fontsize=18)
+                ax.set_ylabel('Temps relatif de réponse', fontsize=18)
+        return axes
 
     def distribution(self, installation='all'):
-        fig, axes = plt.subplots(1, 2, figsize=(self.width * 2, self.height))
+        fig, axes = plt.subplots(1, 2, figsize=(2 * self.width, self.height))
         for i, s in enumerate([1, 2]):
             ax = axes[i]
 
             for ad in [True, False]:
                 df = self.df[(self.df.ad == ad) & (self.df.semester == s)]
-                h = df['ratio_{}'.format(installation)]
+                h = df['score_{}'.format(installation)]
 
                 # The bar plot
                 vs, edges = np.histogram(h, density=True)
@@ -195,22 +280,60 @@ class AggregationVisualizer(object):
                     label="{}: {:.2f}".format(label, np.nanmedian(h)),
                     alpha=0.8)
 
-            ax.set_xlim(0, 2.0)
             ax.set_title('Semester {}'.format(s), fontsize=20)
             ax.legend(fontsize=18)
             lab = 'Taux de réponse'
             ax.set_xlabel('{} ({})'.format(lab, installation), fontsize=20)
 
-    def stimuli(self):
+    def stimuli(self, relative=False):
         fig, axes = plt.subplots(
-            1, 2, figsize=(self.width * 2, self.height * 1), sharey='row')
+            2, 1, figsize=(self.width * 1, self.height * 2), sharey='col')
         for j, s in enumerate(range(1, 3)):
             ax = axes[j]
             ad, v_ad = self.agg.average_stimulus(
-                semester=s, relative=False, autists=True)
+                semester=s, relative=relative, autists=True)
             td, v_td = self.agg.average_stimulus(
-                semester=s, relative=False, autists=False)
-            pd.DataFrame({'ad': ad, 'td': td}).plot.bar(
+                semester=s, relative=relative, autists=False)
+            pd.DataFrame({'AD': ad, 'TD': td}).plot.bar(
                 rot=45, fontsize=18, ax=ax)
-            ax.set_title('Semester {} (AD={} | TD={})'.format(
-                s, int(v_ad), int(v_td)), fontsize=22)
+            ax.legend(fontsize=18)
+            ax.set_title('Semestre {}'.format(s), fontsize=22)
+            ax.set_yticklabels(['{:,.0%}'.format(x) for x in ax.get_yticks()])
+            for tick in ax.yaxis.get_major_ticks():
+                tick.label.set_fontsize(14)
+
+    def stats_in_bar(self, pattern='resp', s=None, ax=None, percentage=True):
+        df = self.agg.responses(as_index=True)
+
+        df2 = df.unstack().transpose()
+        if s is not None:
+            df2 = df2.iloc[df2.index.get_level_values('semester') == s]
+        df2 = select(df2, pattern.split(','))
+        df2.columns = ['TD', 'AD']
+
+        if ax is None:
+            plt.figure(figsize=(8, 5))
+            ax = plt.gca()
+
+        df2.plot.bar(rot=0, ax=ax)
+        ax.legend(fontsize=14)
+
+        labels = []
+        for x in df2.index.to_numpy():
+            parts = []
+            if isinstance(x, tuple):
+                parts = [df2.index.levels[1].name, str(x[1])]
+                x = x[0]
+            parts += list(reversed(x.split('_')))
+
+            labels.append(' '.join(
+                [self.NAME_MAP.get(t, t).title() for t in parts]))
+
+        title = longuest_common(labels)
+        ax.set_title(title, fontsize=20)
+        ax.set_xticklabels(
+            [lab.replace(title, '') for lab in labels], fontsize=16)
+        if percentage:
+            ax.set_yticklabels(['{:,.0%}'.format(x) for x in ax.get_yticks()])
+        for tick in ax.yaxis.get_major_ticks():
+            tick.label.set_fontsize(14)
