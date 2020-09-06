@@ -27,17 +27,17 @@ def plot_many_chronograms(c, num_rows=4, num_cols=4):
     fig.tight_layout()
 
 
-def plot_totals(agg, ax=None):
+def plot_totals(agg, ax=None, **kwargs):
     if ax is None:
         fig = plt.figure(figsize=(9, 4))
         ax = fig.gca()
-        
+
     table = agg.totals().reset_index().pivot_table('total', ['semester'], ['group']) / 60    
-    table.plot.bar(rot=0, ax=ax)
+    table.plot.bar(rot=0, ax=ax, **kwargs)
     readable_ax(ax, 'Temps total de video', 'Semestre', 'Minutes')
 
 
-def plot_stimulations(agg):
+def plot_stimulations(agg, **kwargs):
     df = agg.stimulations(per_tag=False, relative=True)
     
     _, axes = plt.subplots(1, 2, figsize=(16, 4))
@@ -47,7 +47,7 @@ def plot_stimulations(agg):
     for i, col in enumerate(['duration', 'relative']):
         ax = axes[i]
         table = df.pivot_table(col, ['semester'], ['group']) / (60 if i == 0 else 1)
-        table.plot.bar(rot=0, ax=ax)
+        table.plot.bar(rot=0, ax=ax, **kwargs)
         readable_ax(ax, titles[i], 'Semestre', ylabels[i])
 
 
@@ -56,7 +56,8 @@ def plot_per(df,
              rows=['support_time', 'proba'],
              cat_label='Nombre d\'appuis',
              labels=['Minutes', 'Probabilité de réponse'],
-             flip=False,
+             flip=False, percent=False,
+             **kwargs
             ):
     num_rows, num_cols = len(rows), 2
     if flip:
@@ -72,29 +73,31 @@ def plot_per(df,
             ax = axes[row, col] if len(rows) > 1 else axes[i]
             curr_df = df[(df.semester == i + 1)]
             table = curr_df.pivot_table(pivot, categories, ['group'])
-            table.plot.bar(ax=ax)
+            table.plot.bar(ax=ax, **kwargs)
             readable_ax(ax, titles[i], cat_label, labels[j])
+            if percent:
+                ax.yaxis.set_major_formatter(
+                    ticker.PercentFormatter(1.0, decimals=None))
     plt.tight_layout()
 
 
-def plot_invisible(agg, ax=None):
+def plot_invisible(agg, ax=None, **kwargs):
     if ax is None:
         fig = plt.figure(figsize=(9, 4))
         ax = fig.gca()
     df = agg.invisible
-    df.pivot_table('total', ['semester'], ['group']).plot.bar(rot=0, ax=ax)
+    df.pivot_table('total', ['semester'], ['group']).plot.bar(rot=0, ax=ax, **kwargs)
     readable_ax(ax, 'Fraction Invisible', 'Semestre', 'Temps relatif')
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0, decimals=1))
     return df
 
 
-def plot_response(agg, ax=None):
+def plot_response(agg, ax=None, **kwargs):
     if ax is None:
         fig = plt.figure(figsize=(9, 4))
         ax = fig.gca()
-    df = agg.responds()
-    df.pivot_table('relative', 'semester', ['group']).plot.bar(ax=ax)
+    df = agg.responds
+    df.pivot_table('relative', 'semester', ['group']).plot.bar(ax=ax, **kwargs)
     readable_ax(ax, 'Le bébé répond', 'Semestre', 'Temps relatif')
+    ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0, decimals=None))
     return df
-
-    
