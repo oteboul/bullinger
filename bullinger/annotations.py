@@ -1,61 +1,164 @@
+import datetime
+import functools
+import os.path
 import logging
 import numpy as np
 import pandas as pd
-import intervals
-import os.path
+import portion
+
+from bullinger import utils
 
 
 class VideoAnnotations(object):
     """The annotations of a single video, annotated by ELAN."""
 
+    INVISIBLE = 'inv'
+    SUPPORT = 'appui'
+    CONTEXT = 'contexte'
+    ADULT = 'adulte'
+    BABY = 'bébé'
+    WITHOUT = 'sans'
     COLUMNS = ['actor', 'video_id', 'start', 'end', 'duration', 'tag']
-    INSTALLATION_THRESHOLD = 0.25
 
-    def __init__(self, filename, autistic=False):
+    def __init__(self, filename):
         self.filename = filename
-        self.autistic = autistic
-        self.group = 'AD' if self.autistic else 'TD'
-        self.baby = os.path.basename(os.path.dirname(filename))
         self.semester = 1 if '(0-6)' in filename else 2
         self.df = pd.read_csv(filename, sep='\t', header=None)
         self.ill_formed = False
         # In case there are no annotations, they are NaNs
         if np.any(pd.isnull(self.df[self.df.columns[-1]])):
-            logging.error('Some annotations are missing!')
+            logging.error(f'Some annotations are missing in {filename}!')
             self.ill_formed = True
             return
 
+        handle_durations = True
         if len(self.df.columns) > 6:
             self.df = self.df.drop(columns=[2, 4, 6])
+            handle_durations = False
+
         self.df.columns = self.COLUMNS
+        if handle_durations:
+            for col in ['start', 'end', 'duration']:
+                self.df[col] = self.df[col].apply(utils.parse_duration)
+
         for col in ['actor', 'tag']:
             self.df[col] = self.df[col].apply(lambda x: x.strip().lower())
 
+        self.video_id = os.path.basename(filename)[:-4]
+        self.df['video_id'] = self.video_id
         self.min_x = np.min(self.df.start)
         self.max_x = np.max(self.df.end)
 
     @property
+    def support(self) -> pd.DataFrame:
+        return self.df[
+            (self.df['actor'].str.startswith(self.SUPPORT)) |
+            (self.df.tag == self.INVISIBLE)]
+
+    @property
+    def baby(self) -> pd.DataFrame:
+        return self.df[self.df['actor'] == self.BABY]
+
+    @property
+    def interactions(self) -> pd.DataFrame:
+        return self.df[(~self.df['actor'].str.startswith(self.SUPPORT)) &
+                       (self.df['actor'] != self.CONTEXT)]
+
+    def _without_row(self) -> pd.DataFrame:
+        result = {k: None for k in self.COLUMNS}
+        result.update(start=self.min_x, end=self.max_x,
+                      actor=self.CONTEXT + '2', tag=self.WITHOUT)
+        return pd.DataFrame([result])
+
+    def _overlap_actor_tag(self, x, y):
+        """Merges two rows for tag overlap."""
+        sep = ', '
+        tag = sep.join([x[1], y[1]])
+        actor = sep.join([x[0], y[0]]) if x[0] != y[0] else x[0]
+        parts = [x.strip() for x in tag.split(sep)]
+        if len(parts) > 1 and self.WITHOUT in parts:
+            parts = [x for x in parts if x != self.WITHOUT]
+        tag = sep.join(parts)
+
+        if x[1] == self.INVISIBLE or y[1] == self.INVISIBLE:
+            actor, tag = self.CONTEXT, self.INVISIBLE
+        elif x[1] == self.WITHOUT and y[1] != self.WITHOUT and y[0] != self.BABY:
+            actor, tag = y
+        elif x[1] != self.WITHOUT and y[1] == self.WITHOUT and x[0] != self.BABY:
+            actor, tag = x
+        elif x[0] == self.BABY or y[0] == self.BABY:
+            actor = self.BABY
+        return actor, tag
+
+    def overlap_df(self, df):
+        result = portion.IntervalDict()
+        for actor in df.actor.unique():
+            a_df = df[df.actor == actor]
+            curr = portion.IntervalDict()
+            for i, row in a_df.iterrows():
+                text = row.tag
+                if row.actor.startswith(self.SUPPORT):
+                    text = row.actor[len(self.SUPPORT):]
+                curr[portion.closed(row.start, row.end + 0.1)] = (row.actor, text)
+            result = result.combine(curr, how=self._overlap_actor_tag)
+        return result
+
+    @property
+    def invisible_df(self):
+        return self.df[self.df.tag == self.INVISIBLE]
+
+    def to_context(self, with_baby=True):
+        """From multiple actors for context to a single one."""
+        df = self.support
+        if with_baby:
+            df = pd.concat([self.support, self.baby, self.invisible_df])
+
+        df = pd.concat([df, self._without_row()])
+        intervals = self.overlap_df(df)
+        rows = []
+        baby_tags = set(self.baby.tag.unique())
+        for intervs, label in intervals.items():
+            actor = label[0] if self.BABY in label[0] else self.CONTEXT
+            context = [x for x in label[1].split(', ') if x not in baby_tags]
+            intag = [t for t in baby_tags if t in label[1]]
+            tag = intag[0] if intag else None
+            support = len(context) if context != [self.WITHOUT] else 0
+            for i in intervs:
+                rows.append({
+                    'actor': actor,
+                    'video_id': self.video_id,
+                    'start': i.lower,
+                    'end': i.upper,
+                    'duration': i.upper - i.lower,
+                    'tag': tag,
+                    'support': support,
+                    'context': ', '.join(context)
+                })
+        return pd.DataFrame(sorted(rows, key=lambda x: x['start']))
+
+    @property
+    def with_context(self):
+        """Merge the support actor of a single video."""
+        return pd.concat([self.interactions, self.to_context()], sort=True)
+
+    @property
+    def adult_df(self):
+        return self.df[self.df.actor.str.contains(self.ADULT)]
+
+    @property
     def stimulus_distribution(self):
-        return self.get_adult_df().groupby('tag').duration.sum()
+        return self.adult_df.groupby('tag').duration.sum()
 
     def get_df(self, labels):
         return self.df.query(
             ' | '.join([f'actor=="{v}"' for v in labels.split(',')]))
 
-    def get_installation_df(self, presence=None):
-        df = self.get_df('contexte')
+    @property
+    def installation_df(self, presence=None):
+        df = self.get_df(self.CONTEXTE)
         if presence is not None:
             tag = 'avec' if presence else 'sans'
             df = df[df.tag == tag]
-        return df
-
-    def get_adult_df(self):
-        return self.df[self.df.actor.str.contains('adulte')]
-
-    def get_baby_df(self, with_init=False):
-        df = self.get_df('bébé')
-        if not with_init:
-            df = df[df.tag == 'rep']
         return df
 
     def gaussian_smoothing(self, labels, t, kernels):
@@ -74,56 +177,26 @@ class VideoAnnotations(object):
 
     @staticmethod
     def get_intervals(df):
-        result = intervals.Interval()
+        result = portion.Interval()
         for i in np.stack([df.start, df.end], axis=1):
-            result = result.union(intervals.closed(*i))
+            result = result.union(portion.closed(*i))
         return result
 
-    def interval_length(self, intervs):
-        try:
-            return sum([x.upper - x.lower for x in intervs])
-        except Exception as e:
-            return 0.0
-
     def intervals(self, stimulus=False, installation=None):
-        result = intervals.closed(self.min_x, self.max_x)
-        instal_interv = intervals.closed(self.min_x, self.max_x)
-
-        if stimulus is None:
-            result = instal_interv
-        else:
-            df = self.get_adult_df() if stimulus else self.get_baby_df()
-            result = self.get_intervals(df)
-
+        df = self.adult_df if stimulus else self.get_df('bébé')
+        result = self.get_intervals(df)
         if installation is not None:
-            instal_interv = self.get_intervals(
-                self.get_installation_df(installation))
-
-        result = result.intersection(instal_interv)
-        # Remove invisible parts
-        ctx_df = df = self.get_df('contexte')
-        inv_df = ctx_df[ctx_df.tag == 'inv']
-        return result.difference(self.get_intervals(inv_df))
-
-    @staticmethod
-    def score(s, r):
-        return np.arctan(r / (s + 1e-12)) * 2 / np.pi * 90
+            result = result.intersection(
+                self.get_intervals(self.get_installation_df(installation)))
+        return result
 
     def metrics(self, installation=None):
-        # TODO(olivier): This is critical here how to count stuff
-        resp = self.interval_length(
+        resp = utils.length(
             self.intervals(stimulus=False, installation=installation))
-        stim = self.interval_length(
+        stim = utils.length(
             self.intervals(stimulus=True, installation=installation))
-        instal = self.interval_length(
-            self.intervals(stimulus=None, installation=installation))
-        instal_all = self.interval_length(
-            self.intervals(stimulus=None, installation=None))
-        r = resp / instal if instal > 0.0 else np.nan
-        s = stim / instal if instal > 0.0 else np.nan
-        i = instal if installation is None else instal / instal_all
-        score = np.nan
-        if not np.isnan(s) and not np.isnan(r):
-            if i > self.INSTALLATION_THRESHOLD and (s > 0.2 or r > 0.2):
-                score = self.score(s, r)
-        return (r, s, i, score)
+        instal = utils.length(
+            self.get_intervals(self.get_installation_df(installation)))
+        return (
+            resp / instal if instal > 0.0 else np.nan,
+            stim / instal if instal else np.nan)

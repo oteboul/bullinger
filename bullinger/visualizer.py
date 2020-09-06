@@ -1,108 +1,148 @@
 import collections
-import difflib
 import matplotlib
 from matplotlib import lines
 from matplotlib import patches
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-from bullinger.annotations import VideoAnnotations
+import portion
 
 
 class AnnotationsVisualizer(object):
-    CONTEXT = 'contexte'
 
-    def __init__(
-            self, va, height=8, width=12, actor_height=0.7, cmap='tab20',
-            tags=None):
-        self.va = va
-        self.df = self.va.df
+    CONTEXT = 'contexte'
+    INVISIBLE = 'inv'
+    WITHOUT = 'sans'
+    ADULT = 'adulte'
+    RME = 'rme'
+
+    ADULT_COLOR = '#f2ae27'
+    BABY_COLOR = '#ebb5e6'
+    # Color as a function of the number of supports
+    SUPPORT_COLORS = ['o', '#abab03', '#32a852', '#117d99', '#2517a3', '#abab03']
+
+    FONT = {
+        'family': 'sans',
+        'color':  'k',
+        'weight': 'normal',
+        'size': 14,
+    }
+
+    def __init__(self, height=8, width=12, actor_height=0.6, cmap='tab10',
+                 tags=None):
         self.width = width
         self.height = height
         self.actor_height = actor_height
         self.cmap = matplotlib.cm.get_cmap(cmap)
         self.tags = tags
 
-    def chronogram(self, ax=None, add_legend=True):
-        df = self.df[self.df.actor != self.CONTEXT]
-        actors = {a: i for (i, a) in enumerate(df.actor.unique())}
-        tags = df.tag.unique() if self.tags is None else self.tags
-        tags = {t: (i + 1) / (len(tags)+1) for (i, t) in enumerate(tags)}
+    def new_ax(self):
+        plt.figure(figsize=(self.width, self.height))
+        return plt.gca()
+
+    def chronogram(self, cohort, video_id, ax=None, legend=True):
+        df = cohort.df[cohort.df.video_id == video_id]
+
+        in_df = df[(df['actor'] != self.CONTEXT) &
+                   (~df.actor.str.startswith(self.RME))]
+
+        adults = in_df[in_df.actor.str.startswith(self.ADULT)].actor.unique()
+        offset = 0
+        actors = {}
+        actorsticks = []
+        for a in sorted(in_df.actor.unique()):
+            has_adult = len([x.startswith(self.ADULT) for x in actors.keys()]) > 0
+            offset += float(a not in adults) + self.actor_height * has_adult
+            if has_adult and a in adults:
+                actorsticks[-1][1] += self.actor_height / 2
+            else:
+                actorsticks.append([a, offset])
+            actors[a] = offset
+
+        tags = in_df.tag.unique() if self.tags is None else self.tags
+        tags = {t: (i + 1) / (len(tags) + 1) for (i, t) in enumerate(tags)}
 
         if ax is None:
-            plt.figure(figsize=(self.width, self.height))
-            ax = plt.gca()
+            ax = self.new_ax()
 
         h = self.actor_height
-        for i, row in self.df.iterrows():
+        for i, row in in_df.iterrows():
+            c = self.ADULT_COLOR if self.ADULT in row.actor else self.BABY_COLOR
             if row.actor in actors:
                 rect = patches.Rectangle(
                     (row.start, actors[row.actor] - h / 2), row.duration, h,
-                    linewidth=1, edgecolor='k',
-                    facecolor=self.cmap(tags[row.tag]), zorder=10
+                    linewidth=1, edgecolor='k', facecolor=self.cmap(tags.get(row.tag)),
+                    zorder=5
                 )
                 ax.add_patch(rect)
+                biggest = np.max(df[(df['actor']==row.actor) & (df['tag']==row.tag)].duration)
+                if row.duration == biggest:
+                    ax.text(row.start + row.duration / 2, actors[row.actor],
+                            row.tag, fontdict=self.FONT,
+                            ha='center', va='center', zorder=10)
 
-        for i in actors.values():
-            ax.plot([0, self.va.max_x], [i, i], 'k--', alpha=0.4)
-        bounds = ax.get_ylim()
-        for i, row in self.df.iterrows():
+        x_bounds = [np.min(df.start), np.max(df.end)]
+        for _, i in actorsticks:
+            ax.plot([0, x_bounds[1]], [i, i], 'k--', alpha=0.4)
+        for i, row in in_df.iterrows():
             if row.actor in actors:
-                ax.plot([row.start, row.start], bounds, 'k--', alpha=0.2)
+                ax.plot(
+                    [row.start, row.start],
+                    [-h / 2, np.max(list(actors.values())) + h / 2],
+                    'k--', alpha=0.2)
 
-        self.add_context_background(ax)
+        if legend:
+            custom_lines = []
+            labels = []
+            for t, p in sorted(tags.items()):
+                custom_lines.append(lines.Line2D([0], [0], color=self.cmap(p), lw=7))
+                labels.append(t)
+            ax.legend(custom_lines, labels, bbox_to_anchor=(1, 0.70), fontsize=15)
 
-        if add_legend:
-            leg_tags = collections.OrderedDict(sorted(
-                {
-                    k: v for (k, v) in tags.items()
-                    if k in df.tag.unique()
-                }.items()))
-            custom_lines = [
-                lines.Line2D([0], [0], color=self.cmap(v), lw=4)
-                for v in leg_tags.values()
-
-            ]
-            ax.legend(
-                custom_lines, list(leg_tags.keys()),
-                fontsize=16, loc='upper right',
-                bbox_to_anchor=(1.2, 0.6), ncol=1
-            )
-
-        ax.set_yticklabels(list(actors.keys()), fontsize=18)
-        ax.set_yticks(np.arange(len(actors)))
-        self.set_titles(ax)
+        df2 = cohort.context_df
+        self.add_context_background(df2[df2.video_id == video_id], ax)
+        ax.set_yticklabels([x[0] for x in actorsticks], fontsize=18)
+        ax.set_yticks([x[1] for x in actorsticks])
+        self.set_titles(df, ax, video_id)
         return ax
 
-    def add_context_background(self, ax):
-        colors = {'inv': 'k', 'sans': 'red', 'avec': 'green'}
+    def get_context_color(self, row):
+        if row.context == self.INVISIBLE:
+            return 'k'
+        if row.context == self.WITHOUT:
+            return  'r'
+
+        cnt = row.context.count(',') + 1
+        return self.SUPPORT_COLORS[cnt]
+
+    def add_context_background(self, df, ax):
         y_bounds = ax.get_ylim()
-        for i, row in self.va.get_df(self.CONTEXT).iterrows():
+        ax.set_ylim(y_bounds[0], y_bounds[1] + 0.5)
+        y_bounds = ax.get_ylim()
+
+        df = df[(df['actor'] == self.CONTEXT) | (df.context.notnull())] 
+        for _, row in df.iterrows():    
+            color = self.get_context_color(row)
             rect = patches.Rectangle(
                 (row.start, y_bounds[0]), row.duration, np.diff(y_bounds),
-                linewidth=1, edgecolor='k', facecolor=colors[row.tag],
-                alpha=0.1, zorder=1)
+                linewidth=1, edgecolor='k', facecolor=color,
+                alpha=0.2, zorder=1)
             ax.add_patch(rect)
+            if row.duration < 0.5 or row.context == self.WITHOUT:
+                continue
 
-    def set_titles(self, ax):
-        ax.set_xlim(self.va.min_x, self.va.max_x)
+            font = {k: v for (k, v) in self.FONT.items()}
+            font['color'] = color
+            font['weight'] = 'bold'
+            ax.text(row.start + (row.duration) / 2, y_bounds[1]*0.90,
+                    '\n'.join(row.context.split(', ')), fontdict=font,
+                    ha='center',  va='center', zorder=10)
+
+    def set_titles(self, df, ax, title=''):
+        ax.set_xlim(np.min(df.start), np.max(df.end))
         ax.set_xlabel('temps (sec)', fontsize=22)
         for tick in ax.xaxis.get_major_ticks():
             tick.label.set_fontsize(18)
-        r, s, ra, inst = self.va.metrics()
-        m_a = self.va.metrics(installation=True)
-        m_s = self.va.metrics(installation=False)
-        scores = []
-        for name, ms in zip(['avec', 'sans'], [m_a, m_s]):
-            if not np.isnan(ms[1]):
-                scores.append("{} {:.2f}".format(name, ms[2]))
-        scores = " | ".join(scores)
-
-        ax.set_title(
-            "{}. ({}), Semestre {}\n"
-            "Stimulus: {:.0%}, Reponse: {:.0%}".format(
-                self.va.baby[0], self.va.group, self.va.semester, s, r),
-            fontsize=24)
+        ax.set_title(title, fontsize=22)
 
     def activity(self, ax=None, num_points=1000, relative_sigma=0.01):
         curves = {
@@ -137,235 +177,3 @@ class AnnotationsVisualizer(object):
             tick.label.set_fontsize(18)
         ax.legend(prop=dict(size=18))
         return ax
-
-
-def select(df, patterns):
-    masks = []
-    for p in patterns:
-        masks.append([p in x for x in df.index.to_numpy()])
-    return df[np.any(np.stack(masks, axis=1), axis=1)]
-
-
-def longuest_common(strs):
-    if not strs:
-        return ""
-
-    result = strs[0]
-    for curr in strs[1:]:
-        match = difflib.SequenceMatcher(
-            None, result, curr).find_longest_match(0, len(result), 0, len(curr))
-        result = result[match.a: match.a + match.size]
-    return result
-
-
-class AggregationVisualizer(object):
-    NAME_MAP = {
-        'resp': 'réponse',
-        'instal': 'installation',
-        'stimul': 'stimulation',
-        'all': 'général',
-        'semester': 'semestre'
-    }
-
-    def __init__(self, agg, height=8, width=12):
-        self.agg = agg
-        self.df = agg.metrics_df
-        self.height = height
-        self.width = width
-
-    def baby(self, name, idx=None, **kwargs):
-        vas = self.agg.per_baby[name]
-        if idx is not None:
-            vas = [vas[idx]]
-
-        vas.sort(key=lambda x: x.semester)
-        k = len(vas)
-        fig, axes = plt.subplots(1, k, figsize=(k * self.width, self.height))
-        for i, va in enumerate(vas):
-            viewer = AnnotationsVisualizer(
-                va, actor_height=0.6, tags=self.agg.tags)
-            ax = axes[i] if k > 1 else axes
-            viewer.chronogram(ax=ax, **kwargs)
-        if k > 1:
-            for i in range(1, k):
-                axes[i].get_yaxis().set_ticks([])
-
-    def scatter(
-            self, semesters=None, installations=None, plot_score=False,
-            plot_means=False, cmap='viridis', median=False):
-        if installations is None:
-            installations = ['all', 'avec', 'sans']
-        if semesters is None:
-            semesters = [1, 2]
-        if not isinstance(semesters, list):
-            semesters = [semesters]
-        if not isinstance(installations, list):
-            installations = [installations]
-
-        num_instals = len(installations)
-        num_semester = len(semesters)
-
-        fig, axes = plt.subplots(
-            num_instals, num_semester,
-            figsize=(self.width * num_semester, self.height * num_instals))
-
-        for i, s in enumerate(semesters):
-            for j, installation in enumerate(installations):
-                if num_semester > 1 and num_instals > 1:
-                    ax = axes[i, j]
-                elif num_instals == 1 and num_instals == 1:
-                    ax = axes
-                else:
-                    ax = axes[i+j]
-
-                s_df = self.df[(self.df.semester == s)]
-                stimul_col = 'stimu_{}'.format(installation)
-                resp_col = 'resp_{}'.format(installation)
-                instal_col = 'instal_{}'.format(installation)
-                s_df = s_df[
-                    s_df[instal_col] > VideoAnnotations.INSTALLATION_THRESHOLD]
-                s_df = s_df[(s_df[stimul_col] > 0.2) | (s_df[resp_col] > 0.2)]
-                for ad in [False, True]:
-                    df = s_df[s_df.ad == ad]
-                    sc = ax.scatter(
-                        df[stimul_col], df[resp_col],
-                        s=200, ec='k',
-                        label='AD' if ad else 'TD', zorder=3)
-                    if plot_means:
-                        mean_fn = np.median if median else np.mean
-                        sc2 = ax.scatter(
-                            mean_fn(df[stimul_col]),
-                            mean_fn(df[resp_col]),
-                            s=300, marker='s', ec='k', color=sc.get_facecolor(),
-                            zorder=3)
-                        mu = sc2.get_offsets()[0].data
-                        color = sc.get_facecolor()[0]
-                        ax.plot(
-                            [0, mu[0]], [0, mu[1]], linestyle='-', zorder=3,
-                            lw=3, color=color)
-
-                        angle_rad = np.arctan(mu[1]/mu[0])
-                        angle = angle_rad * 180 / np.pi
-                        arc_w = np.sqrt(np.sum(mu**2)) / 2**ad
-                        txt_pos = 0.55 * arc_w * np.array(
-                            [np.cos(angle_rad/2), np.sin(angle_rad/2)])
-
-                        for ann_size, ann_col in [(27, 'k'), (26, color)]:
-                            ax.annotate(
-                                "{:.0f}°".format(angle),
-                                txt_pos,
-                                color=ann_col, fontsize=ann_size, zorder=3)
-
-                        angle_plot = patches.Arc(
-                            [0, 0], arc_w, arc_w, theta1=0.0, theta2=angle,
-                            lw=3, color=color, zorder=3)
-                        ax.add_patch(angle_plot)
-
-                for _, row in s_df.iterrows():
-                    ax.annotate(
-                        "{}.".format(row.baby[0]),
-                        (0.01 + row[stimul_col], 0.015 + row[resp_col]),
-                        fontsize=13, color=(1.0, 1.0, 1.0)
-                    )
-
-                m = 1.05
-                x = np.linspace(0, m, 1000)
-                X, Y = np.meshgrid(x, x)
-                Z = np.ones(X.shape)
-                alpha = 0.0
-                if plot_score:
-                    Z = VideoAnnotations.score(X, Y)
-                    alpha = 0.8
-                im = ax.imshow(
-                    Z, extent=[0, m, 0, m], origin='lower',
-                    alpha=alpha, zorder=1, cmap=cmap)
-                if plot_score:
-                    fig.colorbar(im, ax=ax)
-                ax.set_autoscale_on(False)
-
-                if not plot_means:
-                    ax.plot([0.0, m], [0, m], 'k--', alpha=0.9, zorder=2)
-                ax.legend(fontsize=18)
-                ax.set_title(
-                    'Semestre {}, {} installation'.format(s, installation),
-                    fontsize=18)
-                ax.set_xlabel('Temps relatif de stimulation', fontsize=18)
-                ax.set_ylabel('Temps relatif de réponse', fontsize=18)
-        return axes
-
-    def distribution(self, installation='all'):
-        fig, axes = plt.subplots(1, 2, figsize=(2 * self.width, self.height))
-        for i, s in enumerate([1, 2]):
-            ax = axes[i]
-
-            for ad in [False, True]:
-                df = self.df[(self.df.ad == ad) & (self.df.semester == s)]
-                h = df['score_{}'.format(installation)]
-
-                # The bar plot
-                vs, edges = np.histogram(h, density=True)
-                label = 'AD' if ad else 'TD'
-                bin_width = 0.1
-                num_bins = int(np.ceil((np.max(h) - np.min(h)) / bin_width))
-                ax.hist(
-                    h, bins=num_bins,
-                    label="{}: {:.2f}".format(label, np.nanmedian(h)),
-                    alpha=0.8)
-
-            ax.set_title('Semester {}'.format(s), fontsize=20)
-            ax.legend(fontsize=18)
-            lab = 'Taux de réponse'
-            ax.set_xlabel('{} ({})'.format(lab, installation), fontsize=20)
-
-    def stimuli(self, relative=False):
-        fig, axes = plt.subplots(
-            2, 1, figsize=(self.width * 1, self.height * 2), sharey='col')
-        for j, s in enumerate(range(1, 3)):
-            ax = axes[j]
-            ad, v_ad = self.agg.average_stimulus(
-                semester=s, relative=relative, autists=True)
-            td, v_td = self.agg.average_stimulus(
-                semester=s, relative=relative, autists=False)
-            pd.DataFrame({'TD': td, 'AD': ad}).plot.bar(
-                rot=45, fontsize=18, ax=ax)
-            ax.legend(fontsize=18)
-            ax.set_title('Semestre {}'.format(s), fontsize=22)
-            ax.set_yticklabels(['{:,.0%}'.format(x) for x in ax.get_yticks()])
-            for tick in ax.yaxis.get_major_ticks():
-                tick.label.set_fontsize(14)
-
-    def stats_in_bar(self, pattern='resp', s=None, ax=None, percentage=True):
-        df = self.agg.responses(as_index=True)
-
-        df2 = df.unstack().transpose()
-        if s is not None:
-            df2 = df2.iloc[df2.index.get_level_values('semester') == s]
-        df2 = select(df2, pattern.split(','))
-        df2.columns = ['TD', 'AD']
-
-        if ax is None:
-            plt.figure(figsize=(8, 5))
-            ax = plt.gca()
-
-        df2.plot.bar(rot=0, ax=ax)
-        ax.legend(fontsize=14)
-
-        labels = []
-        for x in df2.index.to_numpy():
-            parts = []
-            if isinstance(x, tuple):
-                parts = [df2.index.levels[1].name, str(x[1])]
-                x = x[0]
-            parts += list(reversed(x.split('_')))
-
-            labels.append(' '.join(
-                [self.NAME_MAP.get(t, t).title() for t in parts]))
-
-        title = longuest_common(labels)
-        ax.set_title(title, fontsize=20)
-        ax.set_xticklabels(
-            [lab.replace(title, '') for lab in labels], fontsize=16)
-        if percentage:
-            ax.set_yticklabels(['{:,.0%}'.format(x) for x in ax.get_yticks()])
-        for tick in ax.yaxis.get_major_ticks():
-            tick.label.set_fontsize(14)

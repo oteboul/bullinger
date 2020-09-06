@@ -8,107 +8,80 @@ import pandas as pd
 import bullinger.annotations
 
 
-class Aggregator(object):
-    """Aggregate statistics over several individuals."""
+class Aggregator:
+    """Aggregate statistics over a cohort."""
+    GROUPBY = ['group', 'semester']
 
-    def __init__(self, folder):
-        self.folder = folder
-        # Who is autistic
-        candidates = glob.glob(os.path.join(self.folder, '*.csv'))
-        if candidates:
-            df = pd.read_csv(candidates[0])
-            self.autists = set(df[df.group == 'AD'].baby.unique())
-        else:
-            self.autists = set()
+    def __init__(self, cohort):
+        self.cohort = cohort
+        self.df = self.cohort.df
 
-        self.filenames = glob.glob(
-            os.path.join(self.folder, '**/*.txt'), recursive=True)
-        self.per_baby = collections.defaultdict(list)
-        for filename in self.filenames:
-            if os.path.basename(filename).startswith('__'):
-                continue
-
-            baby = os.path.basename(os.path.dirname(filename))
-            try:
-                ann = bullinger.annotations.VideoAnnotations(
-                    filename, self.is_autistic(baby))
-            except Exception as e:
-                logging.error(e)
-                continue
-            self.per_baby[baby].append(ann)
-
-        self.tags = set()
-        for ll in self.per_baby.values():
-            for x in ll:
-                try:
-                    self.tags.update(x.df.tag.unique())
-                except Exception as e:
-                    logging.error("{} df has no tag column".format(x.filename))
-        self.tags = list(self.tags)
-
-    def is_autistic(self, baby):
-        return baby in self.autists
-
-    @property
-    def tds(self):
-        return set(self.per_baby.keys()) - self.autists
-
-    def average_stimulus(self, semester=2, relative=True, autists=None):
-        result = pd.Series()
-        total = 0.0
-        for baby, vas in self.per_baby.items():
-            if autists is not None and autists != self.is_autistic(baby):
-                continue
-
-            for va in vas:
-                if not va.ill_formed and va.semester == semester:
-                    total += 1.0
-                    p = va.stimulus_distribution
-                    result = result.add(p, fill_value=0.0)
-
-        result /= total
-        if relative:
-            result /= np.sum(result)
-        return result, total
-
-    @property
-    def metrics_df(self):
-        result = []
-        babies = []
-        for baby, vas in self.per_baby.items():
-            for va in vas:
-                if va.ill_formed:
-                    continue
-
-                babies.append(baby)
-                result.append(
-                    (va.semester, self.is_autistic(baby)) +
-                    va.metrics(None) +
-                    va.metrics(True) +
-                    va.metrics(False)
-                )
-        df = pd.DataFrame(np.array(result))
-        df.columns = [
-            'semester', 'ad',
-            'resp_all', 'stimu_all', 'instal_all', 'score_all',
-            'resp_avec', 'stimu_avec', 'instal_avec', 'score_avec',
-            'resp_sans', 'stimu_sans', 'instal_sans', 'score_sans'
-        ]
-        df = df.astype({
-            'semester': int, 'ad': bool,
-        })
-        df['baby'] = babies
+    def context(self, visible=False) -> pd.DataFrame:
+        df = self.df[(~self.df.context.isnull())]
+        if visible:
+            df = df[df.context != 'inv']
         return df
 
-    def responses(self, median=False, as_index=False):
-        df = self.metrics_df
+    def totals(self, visible=False) -> pd.DataFrame:
+        """Total time per group and semester, optionnally discarding inv."""
+        df = self.context(visible=visible)
+        df = df.groupby(self.GROUPBY).agg({'duration': 'sum'})
+        return df.rename(columns={'duration': 'total'})
 
-        def clean_median(x):
-            return np.nanmedian(x[x < np.inf])
+    def stimulations(self, per_tag=False, relative=True):
+        """Computes stimulations (absolute or not) per group and semester."""
+        df = self.df[self.df.actor.str.startswith('adult')]
+        add = ['tag'] if per_tag else []
+        df = df.groupby(self.GROUPBY + add).agg({'duration': 'sum'})
 
-        def clean_mean(x):
-            x = x[x < np.inf]
-            return np.nanmean(x)
+        if not relative:
+            return df
 
-        agg_fn = clean_median if median else clean_mean
-        return df.groupby(['ad', 'semester'], as_index=as_index).agg(agg_fn)
+        df = df.reset_index()
+        df = df.join(self.totals(), self.GROUPBY)
+        df['relative'] = df.duration / df.total
+        if per_tag:
+            df2 = self.stimulations(per_tag=False, relative=False)
+            df2 = df2.rename(columns={'duration': 'stimulation'})
+            df = df.join(df2, self.GROUPBY)
+            df['in_stimulation'] = df.duration / df.stimulation
+        return df        
+
+    def supports(self, relative=True):
+        df = self.context(visible=True)
+        df = df.groupby(self.GROUPBY + ['support']).agg({'duration': 'sum'})
+        df = df.rename(columns={'duration': 'support_time'})
+
+        if relative:
+            total_df = self.totals(visible=True)
+            df = df.join(total_df, on=self.GROUPBY)
+            df['relative'] = df.support_time / df.total
+            df['minutes'] = df.support_time / 60
+        return df
+
+    @property
+    def responds(self):
+        df = self.context(visible=True)
+        df['response'] = df.duration * (df.tag == 'rep')
+        df = df.groupby(self.GROUPBY).agg(
+            {'duration': 'sum', 'response': 'sum'}).reset_index('semester')
+        df['relative'] = df.response / df.duration
+        return df
+
+    @property
+    def responds_with_support(self):
+        groupby = self.GROUPBY + ['support']
+
+        df = self.context(visible=True)
+        df = df[(df.tag == 'rep')].groupby(groupby).agg({'duration': 'sum'})
+        df = df.join(self.supports(relative=True), on=groupby)
+        df = df.rename(columns={'duration': 'response'})
+        df['proba'] = df.response / df.support_time
+        df['minutes'] = df.response / 60
+        return df.reset_index('semester')
+    
+    @property
+    def invisible(self):
+        return 1.0 - self.totals(visible=True) / self.totals(visible=False)
+
+
