@@ -1,5 +1,6 @@
 from absl import logging
 import collections
+from concurrent import futures
 import glob
 import os.path
 import re
@@ -9,26 +10,29 @@ import pathlib
 import portion
 import numpy as np
 
-from bullinger import annotations, utils
+from bullinger import video, utils
 
-    
 
-class AnnotatedCohort:
+
+class Cohort:
     """The whole annotation data for all the cohort."""
     SUPPORT = 'appui'
     CONTEXT = 'contexte'
     INVISIBLE = 'inv'
 
-    def __init__(self, folder, filter_out=None):
+    def __init__(self, folder: str, num_workers: int = 20, filter_out=None):
         self.folder = folder
-        self.has_observer = False
         for suffix in ['**/*.txt', '**.txt']:
             self.filenames = glob.glob(os.path.join(self.folder, suffix))
             if self.filenames:
-                self.has_observer = True
                 break
+        self._num_workers = min(num_workers, len(self.filenames))
+        self._groups = self._may_load_groups()
+        self._videos = self._read_annotations()
+        self.df = pd.concat([v.df for v in self._videos]).reset_index()
 
-        self.groups = None
+    def _may_load_groups(self):
+        groups = None
         for folder in [self.folder, str(pathlib.Path(__file__).parents[1])]:
             candidates = glob.glob(os.path.join(folder, '**/*.csv'))
             if candidates:
@@ -36,46 +40,15 @@ class AnnotatedCohort:
                 df.columns = [i for i in range(len(df.columns))]
                 df = df[[0, 1]]
                 df[0] = df[0].apply(utils.format_name)
-                self.groups = dict(
-                    df.groupby([0, 1]).agg('count').reset_index().values)
+                groups = dict(df.groupby([0, 1]).agg('count').reset_index().values)
+        return groups
 
-        self.df = None
-        self.full_df = None
-        for filename in self.filenames:
-            try:
-                va = annotations.VideoAnnotations(filename)
-            except Exception as e:
-                logging.warning(f'Cannot open {filename}: {e}')
-                continue
-
-            if va.ill_formed:
-                continue
-
-            df = va.with_context
-            context_df = va.to_context(with_baby=False)
-            observer = filename.split('/')[1]
-            baby = pathlib.Path(filename).parent.name.strip()
-            df['baby'] = baby
-            if self.groups is not None:
-                df['group'] = self.groups.get(baby, '?')
-                va.df['group'] = self.groups.get(baby, '?')
-            if self.has_observer:
-                df['observer'] = observer
-                va.df['observer'] = observer
-            df['semester'] = va.semester
-            if self.df is None:
-                self.df = df
-                self.full_df = va.df
-                self.context_df = context_df
-            else:
-                self.df = pd.concat([self.df, df])
-                self.full_df = pd.concat([self.full_df, va.df])
-                self.context_df = pd.concat([self.context_df, context_df])
-        self.df = self.df.reset_index()
-        self.full_df = self.full_df.reset_index()
-        self.df.support = self.df.support.fillna(0).astype(int)
-        # Init is assimilated with a response for now.
-        self.df.replace('init', 'rep', inplace=True)
+    def _read_annotations(self):
+        def read_one(filename):
+            return video.Video(filename=filename, groups=self._groups)
+        with futures.ThreadPoolExecutor(max_workers=self._num_workers) as executor:
+            videos = executor.map(read_one, self.filenames)
+        return videos
 
     def extract(self, video_id: str, observer: str) -> pd.DataFrame:
         return self.df[(self.df['video_id'] == video_id) &

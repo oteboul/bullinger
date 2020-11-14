@@ -8,6 +8,7 @@ import portion
 import numpy as np
 
 from bullinger import intervals
+from bullinger import utils
 
 
 class Video:
@@ -19,6 +20,7 @@ class Video:
                  support: str = 'appui',
                  without: str = 'sans',
                  context_col: str = 'context',
+                 invisible_tag: str = 'inv',
                  fill_no_support=True):
         if filename is None and df is None:
             raise ValueError("One of `filename` or `df` should be specified")
@@ -27,6 +29,7 @@ class Video:
         self.support = support
         self.without = without
         self.context_col = context_col
+        self.invisible_tag = invisible_tag
         if filename is not None:
             self.name = pathlib.Path(filename).parent.name.strip()
             self.df = self._reads_df()
@@ -78,6 +81,12 @@ class Video:
             # remove diacritics
             df[col] = df[col].str.normalize('NFKD').str.encode(
                 'ascii', errors='ignore').str.decode('utf-8')
+        
+        cols = ['start', 'end', 'duration']
+        for col in cols:
+            if df[col].dtype != float:
+                df.loc[:, col] = df[col].apply(utils.parse_duration)
+
         return df
 
     @property

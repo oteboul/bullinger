@@ -69,8 +69,8 @@ class Chronogram:
         for y in yticks.values():
             ax.plot([0, v.end], [y, y], 'k--', alpha=0.4)
         self._add_context_background(v.context_df, ax)
-        ax.set_yticklabels(list(yticks.keys()), fontsize=18)
-        ax.set_yticks(list(yticks.values()))
+        ax.set_yticklabels(np.array(list(yticks.keys())), fontsize=18)
+        ax.set_yticks(np.array(list(yticks.values())))
         self._beautify(v, ax)
         if legend:
             self._add_legend(ax, tags)
