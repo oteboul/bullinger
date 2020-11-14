@@ -16,8 +16,9 @@ class Video:
                  filename: Optional[str] = None,
                  groups: Optional[Dict[str, str]] = None,
                  df: Optional[pd.DataFrame] = None,
-                 support='appui',
-                 without='sans',
+                 support: str = 'appui',
+                 without: str = 'sans',
+                 context_col: str = 'context',
                  fill_no_support=True):
         if filename is None and df is None:
             raise ValueError("One of `filename` or `df` should be specified")
@@ -25,21 +26,28 @@ class Video:
         self.filename = filename
         self.support = support
         self.without = without
-
+        self.context_col = context_col
         if filename is not None:
-            self.folder = pathlib.Path(filename).parent.name.strip()
+            self.name = pathlib.Path(filename).parent.name.strip()
             self.df = self._reads_df()
         else:
             self.df = df
-        if group_filename is not None:
-
+            self.name = self.df.name[0]
+        if groups is not None:
+            self.df['group'] = groups.get(self.name, '?')
 
         self.num_annotations = self.df.shape[0]
-        if 'context' not in self.df.columns:
-            self.df['context'] = np.nan
+        if self.context_col not in self.df.columns:
+            self.df[self.context_col] = np.nan
         if fill_no_support:
             self._adds_no_support()
         self._add_context()
+
+    @property
+    def vid(self):
+        if self.df.shape[1] > 0:
+            return self.df.video_id.iloc[0]
+        return ''
 
     @property
     def start(self):
@@ -64,7 +72,7 @@ class Video:
         df.columns = ['actor', 'video_id', 'start', 'end', 'duration', 'tag']
         df['baby'] = df.video_id.apply(lambda x: x.split('_')[0].title())
         df['semester'] = df.video_id.str.contains(r'\(6-12\)').astype(int)+1
-        df['folder'] = self.folder
+        df['name'] = self.name
         for col in ['actor', 'tag']:
             df[col] = df[col].apply(lambda x: x.strip().lower())
             # remove diacritics
@@ -81,6 +89,25 @@ class Video:
     def context_df(self):
         df = self.df
         return df[df.actor.str.startswith(self.support) | (df.actor == 'contexte')]
+
+    @property
+    def actors_df(self) -> pd.DataFrame:
+        df = self.df
+        return df[df.actor.isin(['bebe', 'adulte', 'adulte bis'])]
+
+    @property
+    def visible(self) -> pd.DataFrame:
+        return self.df[self.df.tag != 'inv']
+
+    @property
+    def stimulations(self) -> pd.DataFrame:
+        df = self.df
+        return df[df.actor.str.startswith('adult')]
+
+    @property
+    def responses(self) -> pd.DataFrame:
+        df = self.df
+        return df[df.tag.isin(['rep', 'init'])]
         
     def _adds_no_support(self):
         df = self.df
@@ -134,25 +161,6 @@ class Video:
         df.loc[inv_idx, ['context', 'tag', 'num_supports']] = ['inv', 'inv', -1]
         df.loc[df.tag == '-', 'tag'] = 'support'
         self.df = df.sort_values(by='start')
-
-    @property
-    def visible(self) -> pd.DataFrame:
-        return self.df[self.df.tag != 'inv']
-
-    @property
-    def stimulations(self) -> pd.DataFrame:
-        df = self.df
-        return df[df.actor.str.startswith('adult')]
-
-    @property
-    def responses(self) -> pd.DataFrame:
-        df = self.df
-        return df[df.tag.isin(['rep', 'init'])]
-
-    @property
-    def actors(self) -> pd.DataFrame:
-        df = self.df
-        return df[df.actor.str.isin(['bebe', 'adulte', 'adulte bis'])]
 
     @property
     def summary(self) -> pd.Series:
