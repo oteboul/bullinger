@@ -2,6 +2,8 @@ from absl import logging
 import collections
 import glob
 import os.path
+import re
+
 import pandas as pd
 import pathlib
 import portion
@@ -52,7 +54,7 @@ class AnnotatedCohort:
             df = va.with_context
             context_df = va.to_context(with_baby=False)
             observer = filename.split('/')[1]
-            baby = os.path.basename(filename).split('_')[0]
+            baby = pathlib.Path(filename).parent.name.strip()
             df['baby'] = baby
             if self.groups is not None:
                 df['group'] = self.groups.get(baby, '?')
@@ -72,7 +74,8 @@ class AnnotatedCohort:
         self.df = self.df.reset_index()
         self.full_df = self.full_df.reset_index()
         self.df.support = self.df.support.fillna(0).astype(int)
-
+        # Init is assimilated with a response for now.
+        self.df.replace('init', 'rep', inplace=True)
 
     def extract(self, video_id: str, observer: str) -> pd.DataFrame:
         return self.df[(self.df['video_id'] == video_id) &

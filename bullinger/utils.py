@@ -1,6 +1,8 @@
+from typing import Iterable
 import datetime
 import collections
 import portion
+import numpy as np
 import pandas as pd
 
 
@@ -9,6 +11,19 @@ def to_intervals(df):
     result = collections.defaultdict(portion.Interval)     
     for idx, row in df.iterrows():
         result[row['tag']] = result[row['tag']] | portion.closed(row['start'], row['end'])
+    return result
+
+def merge_intervals(intervs: Iterable[portion.Interval]) -> portion.Interval:
+    result = portion.Interval()
+    for i in intervs:
+        result = result | i
+    return result
+
+
+def from_dataframe(df):
+    result = portion.Interval()
+    for i in np.stack([df.start, df.end], axis=1):
+        result = result.union(portion.closed(*i))
     return result
 
 
@@ -32,6 +47,10 @@ def parse_duration(duration: str) -> float:
 
 def format_name(name: str) -> str:
     name = name.strip()
-    if name[-1].upper() == name[-1]:
-        return name[:-1].title() + name[-1]
-    return name.title()
+    parts = []
+    for part in name.split():
+        if part[-1].upper() == part[-1]:
+            parts.append(part[:-1].title() + part[-1])
+        else:
+            parts.append(part.title())
+    return ' '.join(parts)

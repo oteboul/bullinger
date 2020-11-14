@@ -18,8 +18,9 @@ def readable_ax(ax, title, xlabel, ylabel):
         ax.set_title(title, fontsize=24)
 
 
-def plot_many_chronograms(c, num_rows=4, num_cols=4):
-    video_ids = c.df.video_id.unique().tolist()
+def plot_many_chronograms(c, video_ids=None, num_rows=4, num_cols=4):
+    if video_ids is None:
+        video_ids = c.df.video_id.unique().tolist()
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 11, num_rows * 7))
     viz = visualizer.AnnotationsVisualizer(tags=c.tags)
     for i, j in itertools.product(range(num_rows), range(num_cols)):
@@ -49,6 +50,8 @@ def plot_stimulations(agg, **kwargs):
         table = df.pivot_table(col, ['semester'], ['group']) / (60 if i == 0 else 1)
         table.plot.bar(rot=0, ax=ax, **kwargs)
         readable_ax(ax, titles[i], 'Semestre', ylabels[i])
+    axes[1].yaxis.set_major_formatter(
+        ticker.PercentFormatter(1.0, decimals=0))
 
 
 def plot_per(df,
@@ -81,23 +84,39 @@ def plot_per(df,
     plt.tight_layout()
 
 
-def plot_invisible(agg, ax=None, **kwargs):
+def plot_invisible(agg, ax=None, decimals=1, **kwargs):
     if ax is None:
         fig = plt.figure(figsize=(9, 4))
         ax = fig.gca()
     df = agg.invisible
     df.pivot_table('total', ['semester'], ['group']).plot.bar(rot=0, ax=ax, **kwargs)
     readable_ax(ax, 'Fraction Invisible', 'Semestre', 'Temps relatif')
-    ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0, decimals=1))
+    ax.yaxis.set_major_formatter(
+        ticker.PercentFormatter(1.0, decimals=decimals))
     return df
 
 
-def plot_response(agg, ax=None, **kwargs):
+def plot_response(agg, ax=None, decimals=None, **kwargs):
     if ax is None:
         fig = plt.figure(figsize=(9, 4))
         ax = fig.gca()
     df = agg.responds
     df.pivot_table('relative', 'semester', ['group']).plot.bar(ax=ax, **kwargs)
     readable_ax(ax, 'Le bébé répond', 'Semestre', 'Temps relatif')
-    ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0, decimals=None))
+    ax.yaxis.set_major_formatter(
+        ticker.PercentFormatter(1.0, decimals=decimals))
     return df
+
+
+def plot_chronograms(c, video_ids, num_cols=3):
+    num_videos = len(video_ids)
+    num_rows = round(num_videos / num_cols)
+    fig, axes = plt.subplots(
+        num_rows, num_cols, figsize=(num_cols * 11, num_rows * 7))
+    viz = visualizer.AnnotationsVisualizer(tags=c.tags)
+    for i, j in itertools.product(range(num_rows), range(num_cols)):
+        k = i * num_cols + j
+        if k < num_videos:
+            viz.chronogram(c, video_ids[k], legend=j==num_cols-1, ax=axes[i, j])
+    fig.tight_layout()
+
