@@ -6,34 +6,6 @@ import numpy as np
 import pandas as pd
 
 
-def to_intervals(df):
-    """Returns a dictionary which keys are tags and values its intervals."""
-    result = collections.defaultdict(portion.Interval)     
-    for idx, row in df.iterrows():
-        result[row['tag']] = result[row['tag']] | portion.closed(row['start'], row['end'])
-    return result
-
-def merge_intervals(intervs: Iterable[portion.Interval]) -> portion.Interval:
-    result = portion.Interval()
-    for i in intervs:
-        result = result | i
-    return result
-
-
-def from_dataframe(df):
-    result = portion.Interval()
-    for i in np.stack([df.start, df.end], axis=1):
-        result = result.union(portion.closed(*i))
-    return result
-
-
-def length(interv):
-    """Length of an interval."""
-    if interv.empty:
-        return 0.0
-    return sum([x.upper - x.lower for x in interv])
-
-
 def parse_duration(duration: str) -> float:
     if isinstance(duration, float):
         return duration

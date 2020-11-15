@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 class Interval(portion.Interval):
+    """Adds capabilities to the portion.Interval."""
 
     @property
     def length(self):
@@ -74,6 +75,7 @@ def breaks_per_tag(df1: pd.DataFrame,
 
 
 def filter_by(df: pd.DataFrame, interv: Interval):
+    """Keeps only the intersection of the rows with the interval."""
 
     def _intersect(row):
         inter = interv.intersection(portion.closed(row.start, row.end))

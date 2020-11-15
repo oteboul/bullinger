@@ -10,11 +10,12 @@ from bullinger import annotations
 from bullinger import utils
 
 
-class Aggregator:
+class Aggregator(annotations.Annotations):
     """Aggregate statistics over a cohort."""
     GROUPBY = ['group', 'semester']
 
     def __init__(self, cohort):
+        super().__init__(cohort.df)
         self.cohort = cohort
         self.df = self.cohort.df
 
@@ -129,7 +130,6 @@ class Aggregator:
             return pd.Series(result)
 
         return self.df.groupby('video_id').apply(_aux).reset_index()
-
 
     def statistical_test(self,
                          semester: int = 2,

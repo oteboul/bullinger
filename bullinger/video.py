@@ -7,44 +7,44 @@ import pathlib
 import portion
 import numpy as np
 
+from bullinger import annotations
 from bullinger import intervals
 from bullinger import utils
 
 
-class Video:
+class Video(annotations.Annotations):
    
     def __init__(self,
                  filename: Optional[str] = None,
-                 groups: Optional[Dict[str, str]] = None,
                  df: Optional[pd.DataFrame] = None,
-                 support: str = 'appui',
-                 without: str = 'sans',
-                 context_col: str = 'context',
-                 invisible_tag: str = 'inv',
-                 fill_no_support=True):
+                 groups: Optional[Dict[str, str]] = None,
+                 fill_no_support: bool = True,
+                 process_context: bool = True):
+        super().__init__(None)
+
         if filename is None and df is None:
             raise ValueError("One of `filename` or `df` should be specified")
 
         self.filename = filename
-        self.support = support
-        self.without = without
-        self.context_col = context_col
-        self.invisible_tag = invisible_tag
         if filename is not None:
             self.name = pathlib.Path(filename).parent.name.strip()
             self.df = self._reads_df()
         else:
             self.df = df
-            self.name = self.df.name[0]
+            self.name = self.df.name.iloc[0]
         if groups is not None:
             self.df['group'] = groups.get(self.name, '?')
 
+        # Gets the number of annotations before splitting them according to the
+        # context.
         self.num_annotations = self.df.shape[0]
-        if self.context_col not in self.df.columns:
-            self.df[self.context_col] = np.nan
+        context_col = 'context'
+        if context_col not in self.df.columns:
+            self.df[context_col] = np.nan
         if fill_no_support:
             self._adds_no_support()
-        self._add_context()
+        if process_context:
+            self._add_context()
 
     @property
     def vid(self):
@@ -63,17 +63,12 @@ class Video:
     @property
     def duration(self):
         return intervals.Interval.from_dataframe(self.context_df).length
-
-    @property
-    def shape(self):
-        return self.df.shape
-
+    
     def _reads_df(self):
         df = pd.read_csv(self.filename, sep='\t', header=None)
-        if df.shape[1]  > 6:
+        if df.shape[1] > 6:
             df = df.drop(columns=[2, 4, 6])
         df.columns = ['actor', 'video_id', 'start', 'end', 'duration', 'tag']
-        df['baby'] = df.video_id.apply(lambda x: x.split('_')[0].title())
         df['semester'] = df.video_id.str.contains(r'\(6-12\)').astype(int)+1
         df['name'] = self.name
         for col in ['actor', 'tag']:
@@ -81,42 +76,11 @@ class Video:
             # remove diacritics
             df[col] = df[col].str.normalize('NFKD').str.encode(
                 'ascii', errors='ignore').str.decode('utf-8')
-        
         cols = ['start', 'end', 'duration']
         for col in cols:
             if df[col].dtype != float:
                 df.loc[:, col] = df[col].apply(utils.parse_duration)
-
         return df
-
-    @property
-    def support_df(self):
-        df = self.df
-        return df[df.actor.str.startswith(self.support)]
-
-    @property
-    def context_df(self):
-        df = self.df
-        return df[df.actor.str.startswith(self.support) | (df.actor == 'contexte')]
-
-    @property
-    def actors_df(self) -> pd.DataFrame:
-        df = self.df
-        return df[df.actor.isin(['bebe', 'adulte', 'adulte bis'])]
-
-    @property
-    def visible(self) -> pd.DataFrame:
-        return self.df[self.df.tag != 'inv']
-
-    @property
-    def stimulations(self) -> pd.DataFrame:
-        df = self.df
-        return df[df.actor.str.startswith('adult')]
-
-    @property
-    def responses(self) -> pd.DataFrame:
-        df = self.df
-        return df[df.tag.isin(['rep', 'init'])]
         
     def _adds_no_support(self):
         df = self.df
@@ -127,8 +91,8 @@ class Video:
             if not i.empty:
                 df = df.append({'start': i.lower,
                                 'end': i.upper,
-                                'actor': self.support,
-                                'tag': self.without,
+                                'actor': self._support,
+                                'tag': self._without,
                                 'duration': i.upper - i.lower
                                 }, ignore_index=True)
         df = df.fillna(df.mode().iloc[0])
@@ -137,7 +101,6 @@ class Video:
     def _expand_with_context(self, actor='bebe', actor_df=None, tag=None):
         """Replaces the rows of the actor by the context expanded ones."""
         df = self.df        
-
         if actor_df is None:
             actor_df = df[(df.actor == actor) & (pd.isnull(df.context))]
         ctx_df = intervals.breaks_per_tag(actor_df, self.context_df, col='tag')
@@ -145,11 +108,11 @@ class Video:
         if ctx_df.size:
             ctx_df['context'] = ctx_df.tag.apply(
                 lambda x: ','.join(sorted(x.split(',')[1:])))
-            ctx_df['tag'] = ctx_df.tag.apply(lambda x: x.split(',')[0]) if tag is None else tag
+            ctx_df['tag'] = (ctx_df.tag.apply(lambda x: x.split(',')[0])
+                             if tag is None else tag)
             ctx_df['num_supports'] = ctx_df.context.apply(
-                lambda x: len(x.split(',')) - int(x==self.without))
+                lambda x: len(x.split(',')) - int(x == self._without))
             ctx_df['actor'] = actor
-
             df = pd.concat([df, ctx_df]).reset_index().drop(columns=['index'])
             df = df.drop(df[(df.actor==actor) & (pd.isnull(df.context))].index)
         self.df = df
@@ -166,8 +129,8 @@ class Video:
         df = df.fillna(df.mode().iloc[0])
         df = df.drop(self.support_df.index)
 
-        inv_idx = df.context.str.contains('inv')
-        df.loc[inv_idx, ['context', 'tag', 'num_supports']] = ['inv', 'inv', -1]
+        inv_idx = df.context.str.contains(self._invisible)
+        df.loc[inv_idx, ['context', 'tag', 'num_supports']] = [self._invisible, self._invisible, -1]
         df.loc[df.tag == '-', 'tag'] = 'support'
         self.df = df.sort_values(by='start')
 
@@ -189,7 +152,7 @@ class Video:
         result['relative'] = result.responses / result.total
         return result
 
-    def trim_no_stimulations(self, margin: int = 30) -> Video:
+    def trim_no_stimulations(self, margin: int = 30):
         """Remove the context where there is no stimulation."""
         i = intervals.from_dataframe(self.stimulations).expand_right(margin)
         return Video(df=intervals.filter_by(self.df, i), fill_no_support=False)
