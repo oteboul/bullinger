@@ -28,13 +28,17 @@ class Cohort(annotations.Annotations):
         self._groups = self._may_load_groups()
         self._videos = self._read_annotations()
         self.df = pd.concat([v.df for v in self._videos]).reset_index()
+        super().__init__(self.df)
 
     def __len__(self):
         return len(self._videos)
 
+    def __iter__(self):
+        yield from self._videos
+
     @property
     def num_annotations(self):
-        return sum([v.num_annotations for v in self._videos])
+        return sum([v.num_annotations for v in self])
 
     def _may_load_groups(self):
         groups = None
@@ -55,3 +59,8 @@ class Cohort(annotations.Annotations):
         with futures.ThreadPoolExecutor(max_workers=self._num_workers) as executor:
             videos = executor.map(read_one, self.filenames)
         return list(videos)
+
+    @property
+    def summary(self):
+        agg = {'video_id': 'nunique', 'baby': 'nunique', 'duration': np.sum}
+        return self.context_df.groupby(['semester', 'group']).agg(agg)

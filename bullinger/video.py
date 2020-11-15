@@ -70,7 +70,7 @@ class Video(annotations.Annotations):
             df = df.drop(columns=[2, 4, 6])
         df.columns = ['actor', 'video_id', 'start', 'end', 'duration', 'tag']
         df['semester'] = df.video_id.str.contains(r'\(6-12\)').astype(int)+1
-        df['name'] = self.name
+        df['baby'] = self.name
         for col in ['actor', 'tag']:
             df[col] = df[col].apply(lambda x: x.strip().lower())
             # remove diacritics
