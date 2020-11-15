@@ -31,7 +31,7 @@ class Video(annotations.Annotations):
             self.df = self._reads_df()
         else:
             self.df = df
-            self.name = self.df.name.iloc[0]
+            self.name = self.df.baby.iloc[0]
         if groups is not None:
             self.df['group'] = groups.get(self.name, '?')
 
@@ -42,9 +42,11 @@ class Video(annotations.Annotations):
         if context_col not in self.df.columns:
             self.df[context_col] = np.nan
         if fill_no_support:
-            self._adds_no_support()
+            self._add_no_support()
         if process_context:
             self._add_context()
+        # Enforce that the invisble corresponds to the actor context.
+        self.df.loc[self.df.tag == self._invisible, ['actor']] = self._context
 
     @property
     def vid(self):
@@ -82,7 +84,7 @@ class Video(annotations.Annotations):
                 df.loc[:, col] = df[col].apply(utils.parse_duration)
         return df
         
-    def _adds_no_support(self):
+    def _add_no_support(self):
         df = self.df
         full = portion.closed(self.start, self.end)
         context_tags = intervals.tags_from_dataframe(self.context_df)
@@ -123,7 +125,7 @@ class Video(annotations.Annotations):
         actors = set(['bebe', 'adulte', 'adulte bis'])
         for actor in actors.intersection(self.df.actor.unique()):
             self._expand_with_context(actor, tag=None)
-        self._expand_with_context(actor='contexte', actor_df=self.support_df, tag='-')
+        self._expand_with_context(actor='contexte', actor_df=self.context_df, tag='-')
         df = self.df
         df = df.drop_duplicates()
         df = df.fillna(df.mode().iloc[0])
