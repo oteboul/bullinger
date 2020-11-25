@@ -41,9 +41,16 @@ class Cohort(annotations.Annotations):
     def __iter__(self):
         yield from self._videos
 
+    def __getitem__(self, i: int):
+        return self._videos[i]
+
     @property
     def tags(self) -> Sequence[str]:
         return sorted(self.df.tag.unique())
+
+    @property
+    def interaction_tags(self) -> Sequence[str]:
+        return sorted(self.actors_df.tag.unique())
 
     @property
     def num_annotations(self) -> int:

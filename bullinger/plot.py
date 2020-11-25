@@ -57,7 +57,7 @@ def plot_agg(df: pd.DataFrame, metric: Optional[str] = 'reponse', ax=None, **kwa
     return ax
 
 
-def plot_per_semester(df: pd.DataFrame, axes=None, vertical=False, **kwargs):
+def per_semester(df: pd.DataFrame, axes=None, vertical=False, **kwargs):
     semesters = df.index.get_level_values(0).unique()
     if axes is None:
         plot_kw = dict(sharex=True) if vertical else dict(sharey=True)

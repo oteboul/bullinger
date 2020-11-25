@@ -28,7 +28,8 @@ class Video(annotations.Annotations):
         self.filename = filename
         if filename is not None:
             self.name = pathlib.Path(filename).parent.name.strip()
-            self.df = self._reads_df()
+            self.original_df = self._reads_df()
+            self.df = self.original_df
         else:
             self.df = df
             self.name = self.df.baby.iloc[0]
@@ -65,6 +66,13 @@ class Video(annotations.Annotations):
     @property
     def duration(self):
         return intervals.Interval.from_dataframe(self.context_df).length
+
+    @property
+    def content(self) -> str:
+        if self.filename is None:
+            return ''
+        with open(self.filename) as fp:
+            return fp.read()
     
     def _reads_df(self):
         df = pd.read_csv(self.filename, sep='\t', header=None)
@@ -156,6 +164,6 @@ class Video(annotations.Annotations):
 
     def trim_no_stimulations(self, margin: int = 30):
         """Remove the context where there is no stimulation."""
-        i = intervals.from_dataframe(self.stimulations).expand_right(margin)
+        i = intervals.Interval.from_dataframe(self.stimulations).expand_right(margin)
         return Video(df=intervals.filter_by(self.df, i), fill_no_support=False)
 

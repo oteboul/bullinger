@@ -26,12 +26,13 @@ class Annotations:
     @property
     def support_df(self):
         df = self.df
-        return df[df.actor.str.startswith(self._support)]
+        # we found some near dups...
+        return df[df.actor.str.startswith(self._support[:-1])]
 
     @property
     def context_df(self):
         df = self.df
-        support = df.actor.str.startswith(self._support)
+        support = df.actor.str.startswith(self._support[:-1])
         return df[support | (df.actor == self._context)]
 
     @property
