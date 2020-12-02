@@ -27,7 +27,12 @@ def readable_ax(ax,
         ax.set_title(title, fontsize=24)
 
 
-def plot_agg(df: pd.DataFrame, metric: Optional[str] = 'reponse', ax=None, **kwargs):
+def plot_agg(df: pd.DataFrame,
+             metric: Optional[str] = None,
+             ax=None,
+             percentage: Optional[bool] = None,
+             title: Optional[str] = None,
+             **kwargs):
     """Plots the result of a groupby aggregation.
     
     If no metric is given plots all the columns, with one plot per semester.
@@ -51,9 +56,10 @@ def plot_agg(df: pd.DataFrame, metric: Optional[str] = 'reponse', ax=None, **kwa
         kwargs['ec'] = 'k'
     mu.plot.bar(yerr=err, ax=ax, **kwargs)
 
-    if np.all((mu <= 1.0) & (mu >= 0.0), axis=None):
+    if np.all((mu <= 1.0) & (mu >= 0.0), axis=None) and percentage != False:
         ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0, decimals=None))
-    readable_ax(ax, title=metric, xlabel='semester', ylabel=metric, rotation=None)
+    title = metric if title is None else title
+    readable_ax(ax, title=title, xlabel='semester', ylabel=metric, rotation=None)
     return ax
 
 

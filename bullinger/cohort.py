@@ -31,6 +31,7 @@ class Cohort(annotations.Annotations):
         self._num_workers = min(num_workers, len(self.filenames))
         self._groups = self._may_load_groups()
         self._videos = self._read_annotations()
+        self._videos_dict = {v.vid: v for v in self}
         self.df = pd.concat([v.df for v in self._videos]).reset_index()
         self.df = self.df.drop(columns=['index'])
         super().__init__(self.df)
@@ -42,7 +43,10 @@ class Cohort(annotations.Annotations):
         yield from self._videos
 
     def __getitem__(self, i: int):
-        return self._videos[i]
+        v = self._videos_dict.get(i, None)
+        if v is None:
+            v = self._videos[i]
+        return v
 
     @property
     def tags(self) -> Sequence[str]:

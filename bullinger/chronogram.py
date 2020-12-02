@@ -69,7 +69,7 @@ def plot(v: Union[video.Video, pd.DataFrame],
         for t, p in sorted(tags.items()):
             custom.append(lines.Line2D([0], [0], color=cmap(p), lw=7))
             labels.append(t)
-            ax.legend(custom, labels, bbox_to_anchor=(1, 0.70), fontsize=15)
+            ax.legend(custom, labels, bbox_to_anchor=(1, 1), fontsize=15)
 
     def _get_context_color(row):
         if row.context == INVISIBLE:

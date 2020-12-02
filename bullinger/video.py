@@ -1,6 +1,6 @@
 import collections
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 
 import pandas as pd
 import pathlib
@@ -65,7 +65,7 @@ class Video(annotations.Annotations):
 
     @property
     def duration(self):
-        return intervals.Interval.from_dataframe(self.context_df).length
+        return intervals.from_dataframe(self.context_df).length
 
     @property
     def content(self) -> str:
@@ -147,7 +147,7 @@ class Video(annotations.Annotations):
     @property
     def summary(self) -> pd.Series:
         result = {'duration': self.duration}
-        stimul = intervals.Interval.from_dataframe(self.stimulations).length
+        stimul = intervals.from_dataframe(self.stimulations).length
         result['stimulation'] = stimul / self.duration
         result['response'] = self.responses.duration.sum() / self.duration
         return pd.Series(result)
@@ -155,7 +155,7 @@ class Video(annotations.Annotations):
     def responses_per(self, groupby='num_supports') -> pd.DataFrame:
         df1 = (self.visible
                 .groupby(groupby)
-                .agg(lambda x: intervals.Interval.from_dataframe(x).length)[['duration']]
+                .agg(lambda x: intervals.from_dataframe(x).length)[['duration']]
                 .rename(columns={'duration': 'total'}))
         df2 = self.responses.groupby(groupby).agg({'duration': sum}).rename(columns={'duration': 'responses'})
         result = df1.join(df2).reset_index().fillna(0.0)
@@ -164,6 +164,23 @@ class Video(annotations.Annotations):
 
     def trim_no_stimulations(self, margin: int = 30):
         """Remove the context where there is no stimulation."""
-        i = intervals.Interval.from_dataframe(self.stimulations).expand_right(margin)
+        i = intervals.from_dataframe(self.stimulations).expand_right(margin)
         return Video(df=intervals.filter_by(self.df, i), fill_no_support=False)
+
+    def sequences(self, tolerance: float = 3.0) -> Sequence[intervals.Interval]:
+        """Extract the individual sequences of interactions."""
+        stim = intervals.from_dataframe(self.stimulations)
+        if not stim.shape[0]:
+            return []
+
+        resp = intervals.from_dataframe(self.responses)
+        seqs = resp.expand_right(tolerance).union(stim.expand_right(tolerance))
+        events = resp.union(stim)
+        
+        result = []
+        for seq in seqs:
+            curr = seq.intersection(events)
+            result.append(intervals.closed(curr.lower,curr.upper))
+        return result
+            
 

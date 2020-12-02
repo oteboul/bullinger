@@ -15,7 +15,15 @@ class Interval(portion.Interval):
         return np.sum([x.upper - x.lower for x in self])
     
     def expand_right(self, offset):
+        if self.empty:
+            return Interval()
         parts = [portion.closed(i.lower, i.upper + offset) for i in self]
+        return self.__class__(*parts)
+
+    def expand_left(self, offset):
+        if self.empty:
+            return Interval()
+        parts = [portion.closed(i.lower + offset, i.upper) for i in self]
         return self.__class__(*parts)
 
     def union(self, other):
@@ -24,12 +32,17 @@ class Interval(portion.Interval):
     def intersection(self, other):
         return self.__class__(super().intersection(other))
 
-    @staticmethod
-    def from_dataframe(df: pd.DataFrame):
-        result = Interval()
-        for i in np.stack([df.start, df.end], axis=1):
-            result = result.union(portion.closed(*i))
-        return result
+
+
+def from_dataframe(df: pd.DataFrame):
+    result = Interval()
+    for i in np.stack([df.start, df.end], axis=1):
+        result = result.union(portion.closed(*i))
+    return result
+
+
+def closed(lower, upper):
+    return Interval(portion.closed(lower, upper))
 
 
 def tags_from_dataframe(df: pd.DataFrame,
@@ -84,6 +97,7 @@ def filter_by(df: pd.DataFrame, interv: Interval):
         else:
             return inter.lower, inter.upper
 
+    df = df.copy()
     df['bounds'] = df.apply(_intersect, axis=1)
     df['start'] = df.bounds.apply(lambda x: x[0])
     df['end'] = df.bounds.apply(lambda x: x[1])
