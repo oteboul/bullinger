@@ -23,9 +23,18 @@ def to_series(func):
     return wrapper
 
 
-def duration_per_supports(v: video.Video) -> pd.Series:
+def responses_per_supports(v: video.Video) -> pd.Series:
     df = v.responses_per(groupby='num_supports')
     df = pd.pivot_table(df, 'relative', index='num_supports').transpose()
+    return df.iloc[0]
+
+
+def support_duration(v: video.Video) -> pd.Series:    
+    df = v.visible
+    df = df.groupby('num_supports').agg(
+        lambda x: intervals.from_dataframe(x).length)[['duration']]
+    df['duration'] /= df.duration.sum()
+    df = pd.pivot_table(df, 'duration', index='num_supports').transpose()
     return df.iloc[0]
 
 

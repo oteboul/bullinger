@@ -46,6 +46,7 @@ class Video(annotations.Annotations):
             self._add_no_support()
         if process_context:
             self._add_context()
+        self.df['duration'] = self.df['end'] - self.df['start']
         # Enforce that the invisble corresponds to the actor context.
         self.df.loc[self.df.tag == self._invisible, ['actor']] = self._context
 
@@ -53,6 +54,18 @@ class Video(annotations.Annotations):
     def vid(self):
         if self.df.shape[1] > 0:
             return self.df.video_id.iloc[0]
+        return ''
+
+    @property
+    def group(self):
+        if self.df.shape[1] > 0:
+            return self.df.group.iloc[0]
+        return ''
+
+    @property
+    def semester(self):
+        if self.df.shape[1] > 0:
+            return self.df.semester.iloc[0]
         return ''
 
     @property
@@ -73,16 +86,40 @@ class Video(annotations.Annotations):
             return ''
         with open(self.filename) as fp:
             return fp.read()
+
+    @property
+    def constants(self) -> pd.Series:
+        """Returns a Series with all the constants: baby, group, name etc."""
+        return pd.Series({
+            'group': self.group,
+            'semester': self.semester,
+            'id': self.vid,
+            'name': self.name,
+            'duration': self.duration,
+        })
+
+    @property
+    def normalized_video_name(self):
+        result = os.path.basename(self.filename)[:-4]
+        i = result.index('(')
+        result = result[:i].replace('-', '_') + result[i:]
+        if result.endswith(')'):
+            result = result[:result.rfind('(')]
+        return result
     
     def _reads_df(self):
         df = pd.read_csv(self.filename, sep='\t', header=None)
         if df.shape[1] > 6:
             df = df.drop(columns=[2, 4, 6])
         df.columns = ['actor', 'video_id', 'start', 'end', 'duration', 'tag']
+        df['video_id'] = self.normalized_video_name
         df['semester'] = df.video_id.str.contains(r'\(6-12\)').astype(int)+1
         df['baby'] = self.name
         for col in ['actor', 'tag']:
-            df[col] = df[col].apply(lambda x: x.strip().lower())
+            try:
+                df[col] = df[col].apply(lambda x: x.strip().lower())
+            except AttributeError as e:
+                print(e, self.filename)
             # remove diacritics
             df[col] = df[col].str.normalize('NFKD').str.encode(
                 'ascii', errors='ignore').str.decode('utf-8')
@@ -130,7 +167,7 @@ class Video(annotations.Annotations):
     def _add_context(self):
         """Adds the context to all the real actors."""
         df = self.df
-        actors = set(['bebe', 'adulte', 'adulte bis'])
+        actors = set(['bebe', 'bebe bis', 'adulte', 'adulte bis'])
         for actor in actors.intersection(self.df.actor.unique()):
             self._expand_with_context(actor, tag=None)
         self._expand_with_context(actor='contexte', actor_df=self.context_df, tag='-')
@@ -169,10 +206,10 @@ class Video(annotations.Annotations):
 
     def sequences(self, tolerance: float = 3.0) -> Sequence[intervals.Interval]:
         """Extract the individual sequences of interactions."""
-        stim = intervals.from_dataframe(self.stimulations)
-        if not stim.shape[0]:
+        if not self.stimulations.shape[0]:
             return []
 
+        stim = intervals.from_dataframe(self.stimulations)
         resp = intervals.from_dataframe(self.responses)
         seqs = resp.expand_right(tolerance).union(stim.expand_right(tolerance))
         events = resp.union(stim)

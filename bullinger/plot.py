@@ -77,7 +77,7 @@ def per_semester(df: pd.DataFrame, axes=None, vertical=False, **kwargs):
     cols = df.columns.get_level_values(1)
     aggfuncs = cols.unique()
     for i, s in enumerate(semesters):
-        ax = axes[i]
+        ax = axes[i] if len(semesters) > 1 else axes
         mu, err = (df.loc[s, cols==fn].transpose() for fn in aggfuncs)
         mu.index = mu.index.get_level_values(0)
         err.index = err.index.get_level_values(0)

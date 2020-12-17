@@ -20,7 +20,6 @@ class Cohort(annotations.Annotations):
     """The whole annotation data for all the cohort."""
 
     GROUPBY = ['semester', 'group']
-    AGG_FUNCS = ['mean', 'sem']
 
     def __init__(self, folder: str, num_workers: int = 20):
         self.folder = folder
@@ -85,7 +84,7 @@ class Cohort(annotations.Annotations):
         agg = {'video_id': 'nunique', 'baby': 'nunique', 'duration': np.sum}
         return self.context_df.groupby(['semester', 'group']).agg(agg)
 
-    def aggregate(self, video_fn) -> pd.DataFrame:
+    def aggregate(self, video_fn, median: bool = False, fillnans=None) -> pd.DataFrame:
         """Aggregates metrics per video into a single big DataFrame.
         
         Args:
@@ -99,9 +98,10 @@ class Cohort(annotations.Annotations):
 
         def fn(v):
             result = video_fn(v)
-            for col in self.GROUPBY:
-                if col not in result.index and col in v.df.columns:
-                    result[col] = v.df[col].iloc[0]
+            if result is not None:
+                for col in self.GROUPBY:
+                    if col not in result.index and col in v.df.columns:
+                        result[col] = v.df[col].iloc[0]
             return pd.DataFrame(result)
 
         df = (pd.concat([fn(v) for v in self], axis=1)
@@ -111,5 +111,13 @@ class Cohort(annotations.Annotations):
         for col in df.columns:
             if col not in self.GROUPBY:
                 df[col] = df[col].astype(np.float)
+        if fillnans is not None:
+            df = df.fillna(0.0)
 
-        return df.groupby(self.GROUPBY).agg(self.AGG_FUNCS)
+        funcs = ['mean', 'sem'] if not median else ['median', 'sem']
+        return df.groupby(self.GROUPBY).agg(funcs)
+
+    def apply(self, video_fn) -> pd.DataFrame:
+        """Returns a df with all the results of video_fn on each video."""
+        return pd.DataFrame(
+            [pd.concat([v.constants, video_fn(v)]) for v in self])

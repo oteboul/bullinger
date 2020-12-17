@@ -104,7 +104,7 @@ def plot(v: Union[video.Video, pd.DataFrame],
         ax.set_xlabel('temps (sec)', fontsize=22)
         for tick in ax.xaxis.get_major_ticks():
             tick.label.set_fontsize(18)
-        ax.set_title(v.vid, fontsize=22)
+        ax.set_title(f'{v.vid} ({v.group})', fontsize=22)
 
     actors = sorted(v.actors_df.actor.unique())
     heights = {a: h * (i + 0.5 + 0.5 * int(a=="bebe"))
