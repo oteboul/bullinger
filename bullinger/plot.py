@@ -1,3 +1,4 @@
+import collections
 import functools
 import itertools
 from typing import Optional
@@ -93,3 +94,16 @@ def per_semester(df: pd.DataFrame, axes=None, vertical=False, **kwargs):
             ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0, decimals=0))
     return axes
     
+def new_legend(ax):
+    replace = {'AD': 'Atypique', 'TD': 'Typique'}
+
+    if isinstance(ax, collections.abc.Iterable):
+        for a in ax:
+            new_legend(a)
+    else:
+        texts = ax.get_legend().get_texts()
+        if len(texts) != 2:
+            return
+        for text in texts:
+            label = text.get_text()
+            text.set_text(replace.get(label, label))

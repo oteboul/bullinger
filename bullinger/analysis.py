@@ -14,6 +14,8 @@ def to_series(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
+        if result is None:
+            return pd.Series()
         if isinstance(result, pd.Series):
             return result
         elif isinstance(result, dict):

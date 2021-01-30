@@ -10,6 +10,7 @@ import pandas as pd
 import pathlib
 import portion
 import numpy as np
+import scipy.stats
 
 from bullinger import annotations
 from bullinger import utils
@@ -117,7 +118,44 @@ class Cohort(annotations.Annotations):
         funcs = ['mean', 'sem'] if not median else ['median', 'sem']
         return df.groupby(self.GROUPBY).agg(funcs)
 
-    def apply(self, video_fn) -> pd.DataFrame:
-        """Returns a df with all the results of video_fn on each video."""
-        return pd.DataFrame(
-            [pd.concat([v.constants, video_fn(v)]) for v in self])
+    def apply(self, video_fn, fillnans=True) -> pd.DataFrame:
+        """Applies the video_fn function to every video of the cohort."""
+        to_complete = []
+        complete = []
+        num_constants = None
+        for v in self:
+            series = video_fn(v)
+            row = pd.concat([v.constants, series])
+            if num_constants is None:
+                num_constants = v.constants.index.size
+            group = to_complete if series.empty else complete
+            group.append(row)
+
+        if complete:
+            index = complete[0].index[num_constants:]
+        else:
+            return pd.concat(to_complete, axis=1)
+
+        for row in to_complete:
+            default_value = 0.0 if fillnans else np.nan
+            row = pd.concat([row, pd.Series(default_value, index)])
+            complete.append(row)
+
+        return pd.concat(complete, axis=1).transpose()
+
+
+    def pvalues(self, video_fn, fillnans=False, anova=True) -> pd.DataFrame:
+        test_fn = scipy.stats.ttest_ind if not anova else scipy.stats.f_oneway
+        df = self.apply(video_fn, fillnans=fillnans)
+        result = []
+        for s in df.semester.unique():
+            num_constants = self[0].constants.index.size
+            sub = df[df.semester == s]
+            curr = {'semester': s}
+            for col in sub.columns[num_constants:]:
+                curr[col] = test_fn(*[sub[sub.group == g][col] for g in ('AD', 'TD')]).pvalue
+            result.append(curr)
+        result = pd.DataFrame(result)
+        result.semester = result.semester.astype(int)
+        result.sort_values(by='semester')
+        return result
