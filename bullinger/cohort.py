@@ -141,8 +141,10 @@ class Cohort(annotations.Annotations):
             row = pd.concat([row, pd.Series(default_value, index)])
             complete.append(row)
 
-        return pd.concat(complete, axis=1).transpose()
-
+        result = pd.concat(complete, axis=1).transpose()
+        if fillnans:
+            result = result.fillna(0.0)
+        return result
 
     def pvalues(self, video_fn, fillnans=False, anova=True) -> pd.DataFrame:
         test_fn = scipy.stats.ttest_ind if not anova else scipy.stats.f_oneway
@@ -157,5 +159,5 @@ class Cohort(annotations.Annotations):
             result.append(curr)
         result = pd.DataFrame(result)
         result.semester = result.semester.astype(int)
-        result.sort_values(by='semester')
+        result = result.sort_values(by='semester').reset_index().drop(columns='index')
         return result
