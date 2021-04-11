@@ -64,7 +64,7 @@ def plot_agg(df: pd.DataFrame,
     return ax
 
 
-def per_semester(df: pd.DataFrame, axes=None, vertical=False, **kwargs):
+def per_semester(df: pd.DataFrame, axes=None, vertical=False, threshold=None, **kwargs):
     semesters = df.index.get_level_values(0).unique()
     if axes is None:
         plot_kw = dict(sharex=True) if vertical else dict(sharey=True)
@@ -86,8 +86,13 @@ def per_semester(df: pd.DataFrame, axes=None, vertical=False, **kwargs):
             (mu.index.astype(int).values - mu.index.values).sum() == 0.0):
             mu.index = mu.index.astype(int)
             err.index = err.index.astype(int)
-        mu = mu.dropna()
         err = err.dropna()
+        # mu = mu.dropna()
+        mu = mu.loc[err.index]
+        if threshold is not None:
+            above = (mu > threshold).apply(any, axis=1)
+            mu = mu.loc[above[above].index]
+            err = err.loc[mu.index]
         mu.plot.bar(ax=ax, yerr=err, **kwargs)
         readable_ax(ax, xlabel=f'Semestre {s:.0f}', rotation=None)
         if np.all((mu <= 1.0) & (mu >= 0), axis=None):

@@ -127,6 +127,9 @@ class Video(annotations.Annotations):
         for col in cols:
             if df[col].dtype != float:
                 df.loc[:, col] = df[col].apply(utils.parse_duration)
+
+        # Remove old `sans` tag for context, that are wrong.
+        df = df[~((df.actor == 'contexte') & (df.tag == 'sans'))]
         return df
         
     def _add_no_support(self):

@@ -26,3 +26,10 @@ def format_name(name: str) -> str:
         else:
             parts.append(part.title())
     return ' '.join(parts)
+
+
+def select_stats_by_mean(df, above: float = 0.03):
+    means = df.loc[:, df.columns.get_level_values(1) == 'mean']
+    cols = means.columns[(means > above).apply(any, axis=0)].get_level_values(0)
+    return df.loc[:, cols]
+
